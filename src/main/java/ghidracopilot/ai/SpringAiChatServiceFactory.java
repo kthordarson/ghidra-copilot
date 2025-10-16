@@ -1,0 +1,259 @@
+package ghidracopilot.ai;
+
+import java.util.Objects;
+
+import com.azure.ai.openai.OpenAIClientBuilder;
+import com.azure.core.credential.AzureKeyCredential;
+
+import ghidra.util.Msg;
+
+import org.springframework.ai.anthropic.AnthropicChatModel;
+import org.springframework.ai.anthropic.AnthropicChatOptions;
+import org.springframework.ai.anthropic.api.AnthropicApi;
+import org.springframework.ai.azure.openai.AzureOpenAiChatModel;
+import org.springframework.ai.azure.openai.AzureOpenAiChatOptions;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.openai.OpenAiChatModel;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.ollama.OllamaChatModel;
+import org.springframework.ai.ollama.api.OllamaApi;
+import org.springframework.ai.ollama.api.OllamaOptions;
+import org.springframework.ai.ollama.management.ModelManagementOptions;
+import org.springframework.util.StringUtils;
+
+/**
+ * Factory for wiring Spring AI chat clients from user-configurable options.
+ */
+public final class SpringAiChatServiceFactory {
+
+	public static final String DEFAULT_SYSTEM_PROMPT = """
+			You are Ghidra Copilot, an assistant that helps with reverse engineering tasks inside Ghidra. \
+			Provide concise, technically accurate guidance and clearly call out any assumptions you make."""
+			.strip();
+
+	private SpringAiChatServiceFactory() {
+		// utility
+	}
+
+	/**
+	 * Attempts to create a {@link ChatService} from the supplied settings.
+	 *
+	 * @param settings user controlled configuration (must not be null)
+	 * @return a result containing the chat service or an error message explaining why it
+	 * could not be created
+	 */
+	public static Result create(ChatSettings settings) {
+		if (settings == null) {
+			return Result.failure(
+					"Copilot is not configured. Update Tool Options > Ghidra Copilot with your provider credentials.");
+		}
+
+		try {
+			ClientContext context = buildClientContext(settings);
+			ChatService chatService = new SpringAiChatService(
+				context.chatClient(),
+				context.provider(),
+				context.defaultModel(),
+				context.azureDeployment(),
+				context.azureModel());
+			return Result.success(chatService, context.provider().displayName(), context.provider().id());
+		}
+		catch (IllegalStateException ex) {
+			Msg.warn(SpringAiChatServiceFactory.class, ex.getMessage());
+			return Result.failure(ex.getMessage());
+		}
+	}
+
+	private static ClientContext buildClientContext(ChatSettings settings) {
+		AiProvider provider = settings.provider() != null ? settings.provider() : AiProvider.OPENAI;
+		ProviderModelContext modelContext = switch (provider) {
+			case OPENAI -> buildOpenAiContext(settings);
+			case AZURE_OPENAI -> buildAzureOpenAiContext(settings);
+			case ANTHROPIC -> buildAnthropicContext(settings);
+			case OLLAMA -> buildOllamaContext(settings);
+		};
+
+		String systemPrompt = trimToNull(settings.systemPrompt());
+		if (!StringUtils.hasText(systemPrompt)) {
+			systemPrompt = DEFAULT_SYSTEM_PROMPT;
+		}
+
+		ChatClient chatClient = ChatClient.builder(modelContext.chatModel())
+				.defaultSystem(systemPrompt)
+				.build();
+		return new ClientContext(chatClient, provider, modelContext.defaultModel(), modelContext.azureDeployment(),
+				modelContext.azureModel());
+	}
+
+	private static ProviderModelContext buildOpenAiContext(ChatSettings settings) {
+		String apiKey = require(settings.openAiApiKey(),
+				"OpenAI API key is required. Configure it under Tool Options > Ghidra Copilot.");
+		String baseUrl = trimToNull(settings.openAiBaseUrl());
+		String modelName = textOrDefault(settings.openAiModel(), "gpt-4o-mini");
+
+		OpenAiApi.Builder apiBuilder = OpenAiApi.builder().apiKey(apiKey);
+		if (StringUtils.hasText(baseUrl)) {
+			apiBuilder.baseUrl(baseUrl);
+		}
+
+		OpenAiChatOptions chatOptions = OpenAiChatOptions.builder()
+				.model(modelName)
+				.build();
+
+		ChatModel chatModel = OpenAiChatModel.builder()
+				.openAiApi(apiBuilder.build())
+				.defaultOptions(chatOptions)
+				.build();
+		return new ProviderModelContext(chatModel, modelName, null, null);
+	}
+
+	private static ProviderModelContext buildAzureOpenAiContext(ChatSettings settings) {
+		String apiKey = require(settings.azureApiKey(),
+				"Azure OpenAI API key is required. Configure it under Tool Options > Ghidra Copilot.");
+		String endpoint = require(settings.azureEndpoint(),
+				"Azure OpenAI endpoint is required. Configure it under Tool Options > Ghidra Copilot.");
+		String deployment = require(settings.azureDeployment(),
+				"Azure OpenAI deployment name is required. Configure it under Tool Options > Ghidra Copilot.");
+		String modelName = trimToNull(settings.azureModel());
+
+		OpenAIClientBuilder clientBuilder = new OpenAIClientBuilder()
+				.credential(new AzureKeyCredential(apiKey))
+				.endpoint(endpoint);
+
+		AzureOpenAiChatOptions options = AzureOpenAiChatOptions.builder()
+				.deploymentName(deployment)
+				.build();
+		if (StringUtils.hasText(modelName)) {
+			options.setModel(modelName);
+		}
+
+		ChatModel chatModel = AzureOpenAiChatModel.builder()
+				.openAIClientBuilder(clientBuilder)
+				.defaultOptions(options)
+				.build();
+		return new ProviderModelContext(chatModel, modelName, deployment, modelName);
+	}
+
+	private static ProviderModelContext buildAnthropicContext(ChatSettings settings) {
+		String apiKey = require(settings.anthropicApiKey(),
+				"Anthropic API key is required. Configure it under Tool Options > Ghidra Copilot.");
+		String modelName = textOrDefault(settings.anthropicModel(), "claude-3-5-sonnet-latest");
+
+		AnthropicChatOptions chatOptions = AnthropicChatOptions.builder()
+				.model(modelName)
+				.build();
+
+		AnthropicApi.Builder apiBuilder = new AnthropicApi.Builder()
+				.apiKey(apiKey);
+
+		ChatModel chatModel = AnthropicChatModel.builder()
+				.anthropicApi(apiBuilder.build())
+				.defaultOptions(chatOptions)
+				.build();
+		return new ProviderModelContext(chatModel, modelName, null, null);
+	}
+
+	private static ProviderModelContext buildOllamaContext(ChatSettings settings) {
+		String baseUrl = textOrDefault(settings.ollamaBaseUrl(), "http://localhost:11434");
+		String modelName = textOrDefault(settings.ollamaModel(), "llama3.1");
+
+		OllamaApi.Builder apiBuilder = new OllamaApi.Builder();
+		if (StringUtils.hasText(baseUrl)) {
+			apiBuilder.baseUrl(baseUrl);
+		}
+
+		OllamaOptions options = OllamaOptions.builder()
+				.model(modelName)
+				.build();
+
+		ChatModel chatModel = OllamaChatModel.builder()
+				.ollamaApi(apiBuilder.build())
+				.defaultOptions(options)
+				.modelManagementOptions(ModelManagementOptions.defaults())
+				.build();
+		return new ProviderModelContext(chatModel, modelName, null, null);
+	}
+
+	private static String require(String value, String message) {
+		if (!StringUtils.hasText(value)) {
+			throw new IllegalStateException(message);
+		}
+		return value;
+	}
+
+	private static String textOrDefault(String value, String defaultValue) {
+		return StringUtils.hasText(value) ? value.trim() : defaultValue;
+	}
+
+	private static String trimToNull(String value) {
+		if (value == null) {
+			return null;
+		}
+		String trimmed = value.trim();
+		return trimmed.isEmpty() ? null : trimmed;
+	}
+
+	/**
+	 * Represents the outcome of attempting to create a chat service.
+	 */
+	public static final class Result {
+
+		private final ChatService chatService;
+
+		private final String providerDisplayName;
+
+		private final String providerId;
+
+		private final String errorMessage;
+
+		private Result(ChatService chatService, String providerDisplayName, String providerId,
+				String errorMessage) {
+			this.chatService = chatService;
+			this.providerDisplayName = providerDisplayName;
+			this.providerId = providerId;
+			this.errorMessage = errorMessage;
+		}
+
+		public static Result success(ChatService chatService, String providerDisplayName, String providerId) {
+			return new Result(
+					Objects.requireNonNull(chatService, "chatService"),
+					Objects.requireNonNull(providerDisplayName, "providerDisplayName"),
+					Objects.requireNonNull(providerId, "providerId"),
+					null);
+		}
+
+		public static Result failure(String errorMessage) {
+			return new Result(null, null, null, Objects.requireNonNull(errorMessage, "errorMessage"));
+		}
+
+		public boolean isSuccess() {
+			return chatService != null;
+		}
+
+		public ChatService chatService() {
+			return chatService;
+		}
+
+		public String providerDisplayName() {
+			return providerDisplayName;
+		}
+
+		public String providerId() {
+			return providerId;
+		}
+
+		public String errorMessage() {
+			return errorMessage;
+		}
+	}
+
+	private record ClientContext(ChatClient chatClient, AiProvider provider, String defaultModel,
+			String azureDeployment, String azureModel) {
+	}
+
+	private record ProviderModelContext(ChatModel chatModel, String defaultModel, String azureDeployment,
+			String azureModel) {
+	}
+}

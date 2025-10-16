@@ -1,0 +1,5 @@
+Manifest-Version: 1.0
+Specification-Title: ByteViewer
+Specification-Version: 11.4.2
+Specification-Vendor: Ghidra
+
