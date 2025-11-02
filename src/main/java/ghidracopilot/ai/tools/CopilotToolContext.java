@@ -7,6 +7,7 @@ import java.util.function.Function;
 import javax.swing.SwingUtilities;
 
 import ghidra.app.plugin.ProgramPlugin;
+import ghidra.app.services.CodeViewerService;
 import ghidra.app.services.GoToService;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressFactory;
@@ -31,6 +32,10 @@ final class CopilotToolContext {
 
 	GoToService goToService() {
 		return plugin.getTool().getService(GoToService.class);
+	}
+
+	CodeViewerService codeViewerService() {
+		return plugin.getTool().getService(CodeViewerService.class);
 	}
 
 	ToolResult withCurrentProgram(Function<Program, ToolResult> action) {

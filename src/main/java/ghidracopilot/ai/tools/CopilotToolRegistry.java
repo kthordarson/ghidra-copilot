@@ -26,6 +26,7 @@ public final class CopilotToolRegistry {
 		registeredTools.set(List.of(
 			new NavigationTool(context),
 			new DecompileTool(context),
+			new DecompiledCommentTool(context),
 			new RenameFunctionTool(context),
 			new SymbolSearchTool(context),
 			new ReferenceTool(context),
