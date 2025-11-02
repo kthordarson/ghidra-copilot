@@ -7,12 +7,12 @@ import java.util.Locale;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionIterator;
-import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.listing.StringData;
-import ghidra.program.model.listing.StringIterator;
+import ghidra.program.model.data.StringDataInstance;
+import ghidra.program.util.DefinedStringIterator;
 
 /**
  * Tools for enumerating strings and functions within the current program.
@@ -49,8 +49,7 @@ final class SymbolSearchTool {
 	}
 
 	private ToolResult doListStrings(Program program, String contains, Integer maxResults) {
-		Listing listing = program.getListing();
-		StringIterator iterator = listing.getDefinedStrings(true);
+		DefinedStringIterator iterator = DefinedStringIterator.forProgram(program);
 		if (iterator == null) {
 			return ToolResult.error("String enumeration is not supported for this program.");
 		}
@@ -61,15 +60,23 @@ final class SymbolSearchTool {
 		List<String> rows = new ArrayList<>();
 		try {
 			while (iterator.hasNext() && rows.size() < limit) {
-				StringData data = iterator.next();
-				String value = data.getString();
+				Data data = iterator.next();
+				if (data == null || !StringDataInstance.isString(data)) {
+					continue;
+				}
+				StringDataInstance instance = StringDataInstance.getStringDataInstance(data);
+				if (instance == null) {
+					continue;
+				}
+				String value = instance.getStringValue();
 				if (value == null) {
 					continue;
 				}
 				if (hasFilter && !value.toLowerCase(Locale.ROOT).contains(filter)) {
 					continue;
 				}
-				rows.add(context.formatAddress(data.getAddress()) + " : \"" + sanitize(value) + "\"");
+				rows.add(
+					context.formatAddress(instance.getAddress()) + " : \"" + sanitize(value) + "\"");
 			}
 		}
 		catch (Exception ex) {

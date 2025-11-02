@@ -5,6 +5,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.CodeUnit;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.SourceType;
@@ -73,7 +74,7 @@ final class AnnotationTool {
 			return ToolResult.error("No code unit found at " + context.formatAddress(address));
 		}
 
-		int type = resolveCommentType(commentType);
+		CommentType type = resolveCommentType(commentType);
 
 		boolean commit = false;
 		int tx = program.startTransaction("Copilot Set Comment");
@@ -87,9 +88,6 @@ final class AnnotationTool {
 			codeUnit.setComment(type, normalized);
 			commit = true;
 			return ToolResult.success("Applied comment at " + context.formatAddress(address), normalized);
-		}
-		catch (InvalidInputException ex) {
-			return ToolResult.error("Invalid comment text: " + ex.getMessage());
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Unable to set comment: " + ex.getMessage());
@@ -123,7 +121,7 @@ final class AnnotationTool {
 				existing.setName(normalized, context.userSourceType());
 			}
 			if (symbol != null && (makePrimary == null || makePrimary.booleanValue())) {
-				symbolTable.setPrimarySymbol(symbol);
+				symbol.setPrimary();
 			}
 			commit = true;
 			return ToolResult.success("Label set to " + normalized + " at " + context.formatAddress(address));
@@ -170,18 +168,18 @@ final class AnnotationTool {
 		}
 	}
 
-	private int resolveCommentType(String commentType) {
+	private CommentType resolveCommentType(String commentType) {
 		if (commentType == null || commentType.isBlank()) {
-			return CodeUnit.EOL_COMMENT;
+			return CommentType.EOL;
 		}
 		String normalized = commentType.trim().toLowerCase();
 		return switch (normalized) {
-			case "plate" -> CodeUnit.PLATE_COMMENT;
-			case "pre" -> CodeUnit.PRE_COMMENT;
-			case "post" -> CodeUnit.POST_COMMENT;
-			case "repeat" -> CodeUnit.REPEATABLE_COMMENT;
-			case "eol", "end", "end-of-line" -> CodeUnit.EOL_COMMENT;
-			default -> CodeUnit.EOL_COMMENT;
+			case "plate" -> CommentType.PLATE;
+			case "pre" -> CommentType.PRE;
+			case "post" -> CommentType.POST;
+			case "repeat" -> CommentType.REPEATABLE;
+			case "eol", "end", "end-of-line" -> CommentType.EOL;
+			default -> CommentType.EOL;
 		};
 	}
 }

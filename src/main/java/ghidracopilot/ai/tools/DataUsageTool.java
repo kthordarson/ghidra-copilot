@@ -14,9 +14,9 @@ import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceManager;
-import ghidra.util.exception.InvalidInputException;
 
 /**
  * Tools related to data usage, including stack variables and data references.
@@ -92,9 +92,6 @@ final class DataUsageTool {
 
 			return ToolResult.success("Stack variable summary generated.", String.join("\n", lines));
 		}
-		catch (InvalidInputException ex) {
-			return ToolResult.error("Unable to retrieve variables: " + ex.getMessage());
-		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to enumerate variables: " + ex.getMessage());
 		}
@@ -115,7 +112,7 @@ final class DataUsageTool {
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 		List<String> rows = new ArrayList<>();
 		for (Reference reference : references) {
-			if (!reference.isData()) {
+			if (reference.getReferenceType() == null || !reference.getReferenceType().isData()) {
 				continue;
 			}
 			rows.add(context.formatAddress(reference.getFromAddress()) + " -> "
@@ -140,7 +137,10 @@ final class DataUsageTool {
 			.append(" : ")
 			.append(variable.getDataType().getDisplayName());
 		try {
-			builder.append(" @ ").append(variable.getStorage().toString());
+			VariableStorage storage = variable.getVariableStorage();
+			if (storage != null) {
+				builder.append(" @ ").append(storage.toString());
+			}
 		}
 		catch (Exception ignored) {
 			// Storage may not be resolvable for all variables.

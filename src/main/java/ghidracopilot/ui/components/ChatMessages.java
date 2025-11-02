@@ -31,6 +31,7 @@ import javax.swing.border.EmptyBorder;
 import ghidracopilot.ui.messages.AbstractChatMessage;
 import ghidracopilot.ui.messages.ChatAlignment;
 import ghidracopilot.ui.messages.SystemMessage;
+import ghidracopilot.ui.messages.ToolCallMessage;
 
 /**
  * Message transcript area for Copilot chat.
@@ -111,6 +112,12 @@ public class ChatMessages extends JPanel {
 
 	public SystemMessage addSystemMessage(String markdown) {
 		SystemMessage message = new SystemMessage(markdown);
+		appendMessage(message);
+		return message;
+	}
+
+	public ToolCallMessage addToolCallMessage(String toolName, String inputJson) {
+		ToolCallMessage message = new ToolCallMessage(toolName, inputJson);
 		appendMessage(message);
 		return message;
 	}

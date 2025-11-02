@@ -63,15 +63,12 @@ public abstract class AbstractChatMessage extends JPanel {
 		contentComponent = MarkdownRenderer.render(markdown, textColor);
 		applyTextColor(contentComponent, textColor);
 
-		bubblePanel = new JPanel(new BorderLayout());
-		bubblePanel.setOpaque(bubbleChrome);
 		if (bubbleChrome) {
-			bubblePanel.setBackground(backgroundColor);
-			bubblePanel.setBorder(javax.swing.BorderFactory.createCompoundBorder(
-				new RoundedBubbleBorder(borderColor, 14, 1),
-				new EmptyBorder(10, 16, 10, 16)));
+			bubblePanel = new SpeechBubblePanel(alignment, backgroundColor, borderColor);
 		}
 		else {
+			bubblePanel = new JPanel(new BorderLayout());
+			bubblePanel.setOpaque(false);
 			bubblePanel.setBorder(new EmptyBorder(4, 0, 4, 0));
 		}
 		bubblePanel.add(contentComponent, BorderLayout.CENTER);

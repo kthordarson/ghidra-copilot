@@ -12,6 +12,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
@@ -69,15 +70,18 @@ final class ReferenceTool {
 			return ToolResult.error("Unable to parse address: " + addressText);
 		}
 		ReferenceManager referenceManager = program.getReferenceManager();
-		Reference[] references = referenceManager.getReferencesTo(address);
-		if (references == null || references.length == 0) {
+		ReferenceIterator references = referenceManager.getReferencesTo(address);
+		if (references == null || !references.hasNext()) {
 			return ToolResult.success("No references found to " + context.formatAddress(address));
 		}
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 		List<String> rows = new ArrayList<>();
-		for (int i = 0; i < references.length && rows.size() < limit; i++) {
-			Reference ref = references[i];
+		while (references.hasNext() && rows.size() < limit) {
+			Reference ref = references.next();
 			rows.add(formatReference(ref));
+		}
+		if (references.hasNext()) {
+			rows.add("... additional references truncated ...");
 		}
 		return ToolResult.success(
 			"Found " + rows.size() + " references to " + context.formatAddress(address),

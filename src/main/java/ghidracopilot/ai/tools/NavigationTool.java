@@ -7,7 +7,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Program;
-import ghidra.program.util.ProgramLocation;
+import ghidra.app.services.GoToService;
 
 /**
  * Tooling for navigation tasks (e.g., jumping to an address).
@@ -34,8 +34,15 @@ final class NavigationTool {
 			if (address == null) {
 				return ToolResult.error("Unable to parse address: " + addressText);
 			}
-			ProgramLocation location = new ProgramLocation(program, address);
-			context.runOnSwing(() -> context.plugin().goTo(location));
+			context.runOnSwing(() -> {
+				GoToService goToService = context.goToService();
+				if (goToService == null) {
+					throw new IllegalStateException("GoToService is not available.");
+				}
+				if (!goToService.goTo(address)) {
+					throw new IllegalStateException("GoToService rejected the navigation request.");
+				}
+			});
 			return ToolResult.success("Navigated to " + address.toString());
 		}
 		catch (InterruptedException ex) {

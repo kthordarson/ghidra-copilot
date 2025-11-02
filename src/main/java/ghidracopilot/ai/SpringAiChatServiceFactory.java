@@ -58,6 +58,7 @@ public final class SpringAiChatServiceFactory {
 		ClientContext context = buildClientContext(settings);
 		ChatService chatService = new SpringAiChatService(
 			context.chatClient(),
+			context.chatModel(),
 			context.provider(),
 			context.defaultModel(),
 			context.azureDeployment(),
@@ -92,8 +93,8 @@ public final class SpringAiChatServiceFactory {
 			builder.defaultTools(tools.toArray());
 		}
 		ChatClient chatClient = builder.build();
-		return new ClientContext(chatClient, provider, modelContext.defaultModel(), modelContext.azureDeployment(),
-				modelContext.azureModel(), systemPrompt);
+		return new ClientContext(chatClient, modelContext.chatModel(), provider, modelContext.defaultModel(),
+				modelContext.azureDeployment(), modelContext.azureModel(), systemPrompt);
 	}
 
 	private static ProviderModelContext buildOpenAiContext(ChatSettings settings) {
@@ -258,7 +259,7 @@ public final class SpringAiChatServiceFactory {
 		}
 	}
 
-	private record ClientContext(ChatClient chatClient, AiProvider provider, String defaultModel,
+	private record ClientContext(ChatClient chatClient, ChatModel chatModel, AiProvider provider, String defaultModel,
 			String azureDeployment, String azureModel, String systemPrompt) {
 	}
 

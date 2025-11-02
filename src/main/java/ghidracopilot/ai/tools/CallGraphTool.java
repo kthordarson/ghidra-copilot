@@ -12,7 +12,6 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
-import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitorAdapter;
 
 /**
@@ -95,9 +94,6 @@ final class CallGraphTool {
 			}
 
 			return ToolResult.success("Call graph summary generated.", String.join("\n", lines));
-		}
-		catch (CancelledException ex) {
-			return ToolResult.error("Call graph traversal cancelled: " + ex.getMessage());
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Unable to describe call graph: " + ex.getMessage());

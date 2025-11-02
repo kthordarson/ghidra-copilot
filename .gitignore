@@ -90,3 +90,5 @@ nb-configuration.xml
 *.log
 
 lib/
+
+vendor/

@@ -19,7 +19,9 @@ import java.awt.BorderLayout;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 import javax.swing.JComponent;
 import javax.swing.JPanel;
@@ -36,10 +38,14 @@ import ghidracopilot.ai.ChatRequest;
 import ghidracopilot.ai.ChatService;
 import ghidracopilot.ai.ChatServiceException;
 import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
+import ghidracopilot.ai.ToolCallObserver;
+import ghidracopilot.ai.ToolCallUpdate;
 import ghidracopilot.ui.components.ChatHeader;
 import ghidracopilot.ui.components.ChatInput;
 import ghidracopilot.ui.components.ChatMessages;
 import ghidracopilot.ui.messages.SystemMessage;
+import ghidracopilot.ui.messages.ToolCallMessage;
+import ghidracopilot.ui.messages.ToolCallState;
 import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidra.framework.plugintool.Plugin;
 import ghidra.app.plugin.ProgramPlugin;
@@ -51,6 +57,7 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.util.ProgramLocation;
 import ghidra.program.util.ProgramSelection;
 import ghidra.util.Msg;
+import org.springframework.util.StringUtils;
 import resources.Icons;
 
 /**
@@ -141,8 +148,11 @@ public class CopilotProvider extends ComponentProvider {
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
 		String contextualSystemPrompt = buildDynamicSystemContext();
+		Map<String, ToolCallMessage> activeToolMessages = new ConcurrentHashMap<>();
+		ToolCallObserver toolCallObserver = update -> SwingUtilities.invokeLater(
+			() -> handleToolCallUpdate(update, activeToolMessages));
 		ChatRequest chatRequest =
-			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot);
+			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver);
 		ChatMessage userEntry = ChatMessage.user(prompt);
 		messageHistory.add(userEntry);
 
@@ -229,6 +239,40 @@ public class CopilotProvider extends ComponentProvider {
 			return;
 		}
 		SwingUtilities.invokeLater(() -> chatInput.setModelEntries(entries, defaultModelKey));
+	}
+
+	private void handleToolCallUpdate(ToolCallUpdate update, Map<String, ToolCallMessage> registry) {
+		if (update == null || !StringUtils.hasText(update.id())) {
+			return;
+		}
+
+		String callId = update.id();
+		String arguments = StringUtils.hasText(update.argumentsJson()) ? update.argumentsJson() : "{}";
+
+		ToolCallMessage message = registry.computeIfAbsent(callId,
+			key -> chatMessages.addToolCallMessage(update.toolName(), arguments));
+
+		switch (update.state()) {
+			case INVOKED -> message.setState(ToolCallState.INVOKED);
+			case IN_PROGRESS -> message.setState(ToolCallState.IN_PROGRESS);
+			case COMPLETED -> {
+				if (StringUtils.hasText(update.outputJson())) {
+					message.setOutputJson(update.outputJson());
+				}
+				message.setState(ToolCallState.COMPLETED);
+				registry.remove(callId);
+			}
+			case FAILED -> {
+				if (StringUtils.hasText(update.outputJson())) {
+					message.setOutputJson(update.outputJson());
+				}
+				if (StringUtils.hasText(update.errorMessage())) {
+					message.setErrorMessage(update.errorMessage());
+				}
+				message.setState(ToolCallState.FAILED);
+				registry.remove(callId);
+			}
+		}
 	}
 
 	private String extractErrorMessage(Exception ex) {

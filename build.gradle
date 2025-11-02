@@ -77,15 +77,33 @@ dependencies {
 	implementation "org.commonmark:commonmark:0.22.0"
 	implementation "org.commonmark:commonmark-ext-gfm-tables:0.22.0"
 	implementation "com.fifesoft:rsyntaxtextarea:3.3.4"
+
+	testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
+}
+
+def extensionJarName = "${project.name}.jar"
+
+tasks.register('syncJarToLib', Copy) {
+	dependsOn tasks.named('jar')
+	from(tasks.named('jar').flatMap { it.archiveFile })
+	into("$projectDir/lib")
 }
 
 tasks.named('jar') { jarTask ->
-	jarTask.destinationDirectory = file("$projectDir/lib")
-	jarTask.archiveFileName = "${project.name}.jar"
+	jarTask.archiveFileName = extensionJarName
+	jarTask.finalizedBy 'syncJarToLib'
 }
 
 tasks.named('clean') { cleanTask ->
-	cleanTask.delete file("$projectDir/lib/${project.name}.jar")
+	cleanTask.delete file("$projectDir/lib/${extensionJarName}")
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
+
+tasks.named('compileTestJava') { compileTest ->
+	compileTest.dependsOn tasks.named('syncJarToLib')
 }
 
 // Exclude additional files from the built extension

@@ -31,9 +31,12 @@ import javax.swing.border.EmptyBorder;
  */
 public class ToolCallMessage extends AbstractChatMessage {
 
-	private static final Color BACKGROUND = new Color(0xE4F1FB);
-	private static final Color BORDER = new Color(0xB6D4EF);
-	private static final Color TEXT = new Color(0x0F2A46);
+	private static final Color BACKGROUND = new Color(0xE0EEF9);
+	private static final Color BORDER = new Color(0x9FC2E5);
+	private static final Color TEXT = new Color(0x1C2333);
+	private static final Color DETAIL_BACKGROUND = new Color(0xF6FAFF);
+	private static final Color DETAIL_BORDER = new Color(0xD2E2F3);
+	private static final String TOOL_ICON = "\uD83D\uDD27";
 
 	private final String toolName;
 	private final JLabel statusLabel;
@@ -63,7 +66,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 		header.setOpaque(false);
 		header.setBorder(new EmptyBorder(0, 0, 0, 0));
 
-		toolLabel = new JLabel(toolName);
+		toolLabel = new JLabel(TOOL_ICON + " " + toolName);
 		toolLabel.setFont(toolLabel.getFont().deriveFont(Font.BOLD));
 		header.add(toolLabel, BorderLayout.WEST);
 
@@ -79,15 +82,21 @@ public class ToolCallMessage extends AbstractChatMessage {
 		detailArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
 		detailArea.setLineWrap(true);
 		detailArea.setWrapStyleWord(true);
-		detailArea.setOpaque(false);
+		detailArea.setOpaque(true);
+		detailArea.setForeground(TEXT);
+		detailArea.setBackground(DETAIL_BACKGROUND);
+		detailArea.setMargin(new java.awt.Insets(0, 0, 0, 0));
+		detailArea.setCaretPosition(0);
 
 		detailPanel = new JPanel(new BorderLayout());
 		detailPanel.setOpaque(false);
 		detailPanel.setBorder(new EmptyBorder(4, 4, 0, 0));
 		JScrollPane detailScroll = new JScrollPane(detailArea);
-		detailScroll.setBorder(null);
+		detailScroll.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+			javax.swing.BorderFactory.createLineBorder(DETAIL_BORDER, 1, true),
+			new EmptyBorder(6, 8, 6, 8)));
+		detailScroll.getViewport().setBackground(DETAIL_BACKGROUND);
 		detailScroll.setOpaque(false);
-		detailScroll.getViewport().setOpaque(false);
 		detailPanel.add(detailScroll, BorderLayout.CENTER);
 		detailPanel.setVisible(false);
 
