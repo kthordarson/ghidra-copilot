@@ -23,6 +23,8 @@ import org.springframework.ai.ollama.api.OllamaOptions;
 import org.springframework.ai.ollama.management.ModelManagementOptions;
 import org.springframework.util.StringUtils;
 
+import ghidracopilot.ai.tools.CopilotToolRegistry;
+
 /**
  * Factory for wiring Spring AI chat clients from user-configurable options.
  */
@@ -30,7 +32,9 @@ public final class SpringAiChatServiceFactory {
 
 	public static final String DEFAULT_SYSTEM_PROMPT = """
 			You are Ghidra Copilot, an assistant that helps with reverse engineering tasks inside Ghidra. \
-			Provide concise, technically accurate guidance and clearly call out any assumptions you make."""
+			Provide concise, technically accurate guidance and clearly call out any assumptions you make. \
+			When asked to adjust code, proactively rename symbols, add clarifying comments, or refactor as needed \
+			to improve readability without changing behavior unless explicitly instructed otherwise."""
 			.strip();
 
 	private SpringAiChatServiceFactory() {
@@ -51,13 +55,14 @@ public final class SpringAiChatServiceFactory {
 		}
 
 		try {
-			ClientContext context = buildClientContext(settings);
-			ChatService chatService = new SpringAiChatService(
-				context.chatClient(),
-				context.provider(),
-				context.defaultModel(),
-				context.azureDeployment(),
-				context.azureModel());
+		ClientContext context = buildClientContext(settings);
+		ChatService chatService = new SpringAiChatService(
+			context.chatClient(),
+			context.provider(),
+			context.defaultModel(),
+			context.azureDeployment(),
+			context.azureModel(),
+			context.systemPrompt());
 			return Result.success(chatService, context.provider().displayName(), context.provider().id());
 		}
 		catch (IllegalStateException ex) {
@@ -80,11 +85,15 @@ public final class SpringAiChatServiceFactory {
 			systemPrompt = DEFAULT_SYSTEM_PROMPT;
 		}
 
-		ChatClient chatClient = ChatClient.builder(modelContext.chatModel())
-				.defaultSystem(systemPrompt)
-				.build();
+		ChatClient.Builder builder = ChatClient.builder(modelContext.chatModel())
+				.defaultSystem(systemPrompt);
+		var tools = CopilotToolRegistry.tools();
+		if (tools != null && !tools.isEmpty()) {
+			builder.defaultTools(tools.toArray());
+		}
+		ChatClient chatClient = builder.build();
 		return new ClientContext(chatClient, provider, modelContext.defaultModel(), modelContext.azureDeployment(),
-				modelContext.azureModel());
+				modelContext.azureModel(), systemPrompt);
 	}
 
 	private static ProviderModelContext buildOpenAiContext(ChatSettings settings) {
@@ -250,7 +259,7 @@ public final class SpringAiChatServiceFactory {
 	}
 
 	private record ClientContext(ChatClient chatClient, AiProvider provider, String defaultModel,
-			String azureDeployment, String azureModel) {
+			String azureDeployment, String azureModel, String systemPrompt) {
 	}
 
 	private record ProviderModelContext(ChatModel chatModel, String defaultModel, String azureDeployment,

@@ -21,7 +21,6 @@ import java.awt.Dimension;
 import java.awt.Component;
 import java.awt.Container;
 
-import javax.swing.BorderFactory;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.border.EmptyBorder;
@@ -33,6 +32,8 @@ import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
  */
 public abstract class AbstractChatMessage extends JPanel {
 
+	private static final int MAX_CONTENT_WIDTH = 520;
+
 	private final ChatAlignment alignment;
 	private final JPanel bubblePanel;
 	private final Color textColor;
@@ -40,24 +41,41 @@ public abstract class AbstractChatMessage extends JPanel {
 
 	protected AbstractChatMessage(String markdown, ChatAlignment alignment, Color backgroundColor,
 			Color borderColor, Color textColor) {
+		this(markdown, alignment, backgroundColor, borderColor, textColor, true);
+	}
+
+	protected AbstractChatMessage(String markdown, ChatAlignment alignment, Color backgroundColor,
+			Color borderColor, Color textColor, boolean bubbleChrome) {
 
 		this.alignment = alignment;
 		this.textColor = textColor;
 
 		setLayout(new BorderLayout());
 		setOpaque(false);
+		setAlignmentY(Component.TOP_ALIGNMENT);
+		setAlignmentX(switch (alignment) {
+			case LEFT -> Component.LEFT_ALIGNMENT;
+			case RIGHT -> Component.RIGHT_ALIGNMENT;
+			case CENTER -> Component.CENTER_ALIGNMENT;
+		});
+		setMaximumSize(new Dimension(MAX_CONTENT_WIDTH, Integer.MAX_VALUE));
 
 		contentComponent = MarkdownRenderer.render(markdown, textColor);
 		applyTextColor(contentComponent, textColor);
 
 		bubblePanel = new JPanel(new BorderLayout());
-		bubblePanel.setOpaque(true);
-		bubblePanel.setBackground(backgroundColor);
-		bubblePanel.setBorder(BorderFactory.createCompoundBorder(
-			BorderFactory.createLineBorder(borderColor, 1, true),
-			new EmptyBorder(8, 12, 8, 12)));
+		bubblePanel.setOpaque(bubbleChrome);
+		if (bubbleChrome) {
+			bubblePanel.setBackground(backgroundColor);
+			bubblePanel.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+				new RoundedBubbleBorder(borderColor, 14, 1),
+				new EmptyBorder(10, 16, 10, 16)));
+		}
+		else {
+			bubblePanel.setBorder(new EmptyBorder(4, 0, 4, 0));
+		}
 		bubblePanel.add(contentComponent, BorderLayout.CENTER);
-		bubblePanel.setMaximumSize(new Dimension(480, Integer.MAX_VALUE));
+		bubblePanel.setMaximumSize(new Dimension(MAX_CONTENT_WIDTH, Integer.MAX_VALUE));
 
 		add(bubblePanel, BorderLayout.CENTER);
 	}

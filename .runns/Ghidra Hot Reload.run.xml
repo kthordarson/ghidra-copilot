@@ -1,0 +1,7 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Ghidra Hot Reload" type="CompoundRunConfigurationType">
+    <toRun name="Ghidra DevLoop" type="PowerShellRunType" />
+    <toRun name="Ghidra Run" type="PowerShellRunType" />
+    <method v="2" />
+  </configuration>
+</component>

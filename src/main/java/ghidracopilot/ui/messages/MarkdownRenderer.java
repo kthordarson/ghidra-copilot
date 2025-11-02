@@ -36,6 +36,7 @@ import javax.swing.ScrollPaneConstants;
 import javax.swing.UIManager;
 import javax.swing.border.EmptyBorder;
 import javax.swing.text.html.HTMLEditorKit;
+import javax.swing.text.html.StyleSheet;
 
 import org.commonmark.ext.gfm.tables.TablesExtension;
 import org.commonmark.node.FencedCodeBlock;
@@ -146,14 +147,14 @@ public final class MarkdownRenderer {
 		textArea.setAntiAliasingEnabled(true);
 		textArea.setCodeFoldingEnabled(false);
 		textArea.setLineWrap(true);
-		textArea.setWrapStyleWord(false);
+		textArea.setWrapStyleWord(true);
 		textArea.setBorder(new EmptyBorder(6, 8, 6, 8));
 		textArea.setBackground(new Color(0xf7f9fb));
 
 		RTextScrollPane scrollPane = new RTextScrollPane(textArea);
 		scrollPane.setBorder(BorderFactory.createLineBorder(new Color(0xd0d7de)));
 		scrollPane.setFoldIndicatorEnabled(false);
-		scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED);
+		scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 		scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
 		scrollPane.setOpaque(false);
 		scrollPane.getViewport().setOpaque(false);
@@ -164,16 +165,33 @@ public final class MarkdownRenderer {
 
 	private static JEditorPane createHtmlPane(String html, Color textColor) {
 		JEditorPane pane = new JEditorPane();
-		pane.setEditorKit(new HTMLEditorKit());
+		HTMLEditorKit kit = new HTMLEditorKit();
+		StyleSheet styleSheet = kit.getStyleSheet();
+		styleSheet.addRule(buildBodyRule(textColor));
+		styleSheet.addRule("pre, code { white-space: pre-wrap; word-wrap: break-word; overflow-wrap:anywhere; }");
+		pane.setEditorKit(kit);
 		pane.setContentType("text/html");
-		pane.setText("<html><body style='margin:0;padding:0;font-family:" + defaultFontFamily() +
-			";font-size:" + defaultFontSize() + "pt;" + cssColor(textColor) + "'>" + html +
-			"</body></html>");
+		pane.setText("<html><body>" + html + "</body></html>");
 		pane.setEditable(false);
 		pane.setOpaque(false);
 		pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
 		pane.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
 		return pane;
+	}
+
+	private static String buildBodyRule(Color textColor) {
+		StringBuilder builder = new StringBuilder("body { margin:0; padding:0; font-family:'")
+			.append(defaultFontFamily())
+			.append("'; font-size:")
+			.append(defaultFontSize())
+			.append("pt; line-height:1.35; word-wrap:break-word; overflow-wrap:anywhere; white-space:normal;");
+		if (textColor != null) {
+			builder.append(" color:#")
+				.append(String.format("%02x%02x%02x", textColor.getRed(), textColor.getGreen(), textColor.getBlue()))
+				.append(';');
+		}
+		builder.append('}');
+		return builder.toString();
 	}
 
 	private static void updateFont(JComponent component, int style) {
@@ -191,13 +209,6 @@ public final class MarkdownRenderer {
 	private static int defaultFontSize() {
 		Font font = UIManager.getFont("Label.font");
 		return font != null ? font.getSize() : 12;
-	}
-
-	private static String cssColor(Color color) {
-		if (color == null) {
-			return "";
-		}
-		return "color:#" + String.format("%02x%02x%02x", color.getRed(), color.getGreen(), color.getBlue()) + ";";
 	}
 
 	private static String resolveSyntax(String info) {

@@ -53,12 +53,15 @@ import ghidra.framework.plugintool.PluginTool;
 import ghidra.framework.plugintool.util.PluginStatus;
 import ghidra.util.HelpLocation;
 import ghidracopilot.ai.AiProvider;
-import ghidracopilot.model.ModelRegistry;
-import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidracopilot.ai.ChatSettings;
 import ghidracopilot.ai.SpringAiChatServiceFactory;
+import ghidracopilot.ai.tools.CopilotToolRegistry;
+import ghidracopilot.config.CopilotConfigPersistence;
+import ghidracopilot.model.ModelRegistry;
+import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidracopilot.ui.CopilotProvider;
 import ghidracopilot.ui.CopilotSettingsDialog;
+import java.util.Properties;
 import org.springframework.util.StringUtils;
 
 /**
@@ -88,21 +91,25 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		super(tool);
 
 		toolOptions = tool.getOptions(OPTIONS_CATEGORY);
-		registerOptions(toolOptions);
+		Properties persistedDefaults = CopilotConfigPersistence.load();
+		registerOptions(toolOptions, persistedDefaults);
 		toolOptions.addOptionsChangeListener(this);
+		CopilotConfigPersistence.persistFrom(toolOptions);
 
-		String pluginName = getName();
-		provider = new CopilotProvider(this, pluginName);
-		provider.addToTool();
-		provider.setVisible(true);
+	String pluginName = getName();
+	provider = new CopilotProvider(this, pluginName);
+	provider.addToTool();
+	provider.setVisible(true);
 
-		String topicName = this.getClass().getPackage().getName();
-		String anchorName = "HelpAnchor";
-		provider.setHelpLocation(new HelpLocation(topicName, anchorName));
+	CopilotToolRegistry.configureForPlugin(this);
 
-		createSettingsMenuAction();
+	String topicName = this.getClass().getPackage().getName();
+	String anchorName = "HelpAnchor";
+	provider.setHelpLocation(new HelpLocation(topicName, anchorName));
 
-		SwingUtilities.invokeLater(this::applySettings);
+	createSettingsMenuAction();
+
+	SwingUtilities.invokeLater(this::applySettings);
 	}
 
 	@Override
@@ -114,13 +121,14 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 
 	@Override
 	protected void dispose() {
-		if (toolOptions != null) {
-			toolOptions.removeOptionsChangeListener(this);
-		}
-		if (openSettingsAction != null) {
-			tool.removeAction(openSettingsAction);
-		}
-		super.dispose();
+	if (toolOptions != null) {
+		toolOptions.removeOptionsChangeListener(this);
+	}
+	if (openSettingsAction != null) {
+		tool.removeAction(openSettingsAction);
+	}
+	CopilotToolRegistry.clear();
+	super.dispose();
 	}
 
 	@Override
@@ -128,40 +136,56 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		if (options != toolOptions) {
 			return;
 		}
+		CopilotConfigPersistence.persistFrom(toolOptions);
 		applySettings();
 	}
 
-	private void registerOptions(ToolOptions options) {
-		options.registerOption(OPTION_PROVIDER, OptionType.STRING_TYPE, CopilotOptions.DEFAULT_PROVIDER, null,
+	private void registerOptions(ToolOptions options, Properties persistedDefaults) {
+		String providerDefault = persistedDefaults.getProperty(OPTION_PROVIDER, CopilotOptions.DEFAULT_PROVIDER);
+		String systemPromptDefault =
+			persistedDefaults.getProperty(OPTION_SYSTEM_PROMPT, CopilotOptions.defaultSystemPrompt());
+		String openAiApiKeyDefault = persistedDefaults.getProperty(OPTION_OPENAI_API_KEY, "");
+		String openAiBaseUrlDefault = persistedDefaults.getProperty(OPTION_OPENAI_BASE_URL, "");
+		String openAiModelDefault = persistedDefaults.getProperty(OPTION_OPENAI_MODEL, DEFAULT_OPENAI_MODEL);
+		String azureApiKeyDefault = persistedDefaults.getProperty(OPTION_AZURE_API_KEY, "");
+		String azureEndpointDefault = persistedDefaults.getProperty(OPTION_AZURE_ENDPOINT, "");
+		String azureDeploymentDefault = persistedDefaults.getProperty(OPTION_AZURE_DEPLOYMENT, "");
+		String azureModelDefault = persistedDefaults.getProperty(OPTION_AZURE_MODEL, "");
+		String anthropicApiKeyDefault = persistedDefaults.getProperty(OPTION_ANTHROPIC_API_KEY, "");
+		String anthropicModelDefault = persistedDefaults.getProperty(OPTION_ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL);
+		String ollamaBaseUrlDefault =
+			persistedDefaults.getProperty(OPTION_OLLAMA_BASE_URL, DEFAULT_OLLAMA_BASE_URL);
+		String ollamaModelDefault = persistedDefaults.getProperty(OPTION_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL);
+
+		options.registerOption(OPTION_PROVIDER, OptionType.STRING_TYPE, providerDefault, null,
 			"Large language model provider used for Copilot responses.");
-		options.registerOption(OPTION_SYSTEM_PROMPT, OptionType.STRING_TYPE,
-			CopilotOptions.defaultSystemPrompt(), null,
+		options.registerOption(OPTION_SYSTEM_PROMPT, OptionType.STRING_TYPE, systemPromptDefault, null,
 			"System instruction that is prepended to every request.");
 
-		options.registerOption(OPTION_OPENAI_API_KEY, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_OPENAI_API_KEY, OptionType.STRING_TYPE, openAiApiKeyDefault, null,
 			"Secret key issued by OpenAI.");
-		options.registerOption(OPTION_OPENAI_BASE_URL, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_OPENAI_BASE_URL, OptionType.STRING_TYPE, openAiBaseUrlDefault, null,
 			"Optional override for the OpenAI API base URL.");
-		options.registerOption(OPTION_OPENAI_MODEL, OptionType.STRING_TYPE, DEFAULT_OPENAI_MODEL, null,
+		options.registerOption(OPTION_OPENAI_MODEL, OptionType.STRING_TYPE, openAiModelDefault, null,
 			"OpenAI chat model identifier.");
 
-		options.registerOption(OPTION_AZURE_API_KEY, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_AZURE_API_KEY, OptionType.STRING_TYPE, azureApiKeyDefault, null,
 			"Azure OpenAI API key.");
-		options.registerOption(OPTION_AZURE_ENDPOINT, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_AZURE_ENDPOINT, OptionType.STRING_TYPE, azureEndpointDefault, null,
 			"Azure OpenAI endpoint URL.");
-		options.registerOption(OPTION_AZURE_DEPLOYMENT, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_AZURE_DEPLOYMENT, OptionType.STRING_TYPE, azureDeploymentDefault, null,
 			"Azure OpenAI deployment name.");
-		options.registerOption(OPTION_AZURE_MODEL, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_AZURE_MODEL, OptionType.STRING_TYPE, azureModelDefault, null,
 			"Optional Azure OpenAI model identifier.");
 
-		options.registerOption(OPTION_ANTHROPIC_API_KEY, OptionType.STRING_TYPE, "", null,
+		options.registerOption(OPTION_ANTHROPIC_API_KEY, OptionType.STRING_TYPE, anthropicApiKeyDefault, null,
 			"Anthropic API key.");
-		options.registerOption(OPTION_ANTHROPIC_MODEL, OptionType.STRING_TYPE, DEFAULT_ANTHROPIC_MODEL, null,
+		options.registerOption(OPTION_ANTHROPIC_MODEL, OptionType.STRING_TYPE, anthropicModelDefault, null,
 			"Anthropic Claude model identifier.");
 
-		options.registerOption(OPTION_OLLAMA_BASE_URL, OptionType.STRING_TYPE, DEFAULT_OLLAMA_BASE_URL, null,
+		options.registerOption(OPTION_OLLAMA_BASE_URL, OptionType.STRING_TYPE, ollamaBaseUrlDefault, null,
 			"Ollama server base URL.");
-		options.registerOption(OPTION_OLLAMA_MODEL, OptionType.STRING_TYPE, DEFAULT_OLLAMA_MODEL, null,
+		options.registerOption(OPTION_OLLAMA_MODEL, OptionType.STRING_TYPE, ollamaModelDefault, null,
 			"Ollama model to load.");
 	}
 

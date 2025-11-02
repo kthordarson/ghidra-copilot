@@ -17,6 +17,7 @@ package ghidracopilot.ui;
 
 import java.awt.BorderLayout;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
@@ -30,6 +31,7 @@ import docking.ComponentProvider;
 import docking.WindowPosition;
 import docking.action.DockingAction;
 import docking.action.ToolBarData;
+import ghidracopilot.ai.ChatMessage;
 import ghidracopilot.ai.ChatRequest;
 import ghidracopilot.ai.ChatService;
 import ghidracopilot.ai.ChatServiceException;
@@ -37,11 +39,17 @@ import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
 import ghidracopilot.ui.components.ChatHeader;
 import ghidracopilot.ui.components.ChatInput;
 import ghidracopilot.ui.components.ChatMessages;
-import ghidracopilot.ui.messages.ReasoningMessage;
-import ghidracopilot.ui.messages.ToolCallMessage;
-import ghidracopilot.ui.messages.ToolCallState;
+import ghidracopilot.ui.messages.SystemMessage;
 import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidra.framework.plugintool.Plugin;
+import ghidra.app.plugin.ProgramPlugin;
+import ghidra.app.services.CodeViewerService;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.Program;
+import ghidra.program.util.ProgramLocation;
+import ghidra.program.util.ProgramSelection;
 import ghidra.util.Msg;
 import resources.Icons;
 
@@ -54,6 +62,8 @@ public class CopilotProvider extends ComponentProvider {
 	private final ChatHeader chatHeader;
 	private final ChatMessages chatMessages;
 	private final ChatInput chatInput;
+	private final ProgramPlugin programPlugin;
+	private final List<ChatMessage> messageHistory = new ArrayList<>();
 	private ChatService chatService;
 	private String chatInitializationError;
 	private String providerDisplayName;
@@ -62,6 +72,7 @@ public class CopilotProvider extends ComponentProvider {
 
 	public CopilotProvider(Plugin plugin, String owner) {
 		super(plugin.getTool(), "Ghidra Copilot", owner);
+		this.programPlugin = plugin instanceof ProgramPlugin pp ? pp : null;
 
 		setTitle("Ghidra Copilot");
 		setIcon(Icons.ADD_ICON);
@@ -125,23 +136,15 @@ public class CopilotProvider extends ComponentProvider {
 		}
 
 		String modelIdentifier = selectedModel != null ? selectedModel.identifier() : null;
-		String modelDisplayName = selectedModel != null ? selectedModel.displayName() : null;
-		String modelKey = selectedModel != null ? selectedModel.key() : null;
-
-		String reasoningText = "_Contacting " + providerName +
-			(modelDisplayName != null ? " — " + modelDisplayName : "") + "…_";
-		ReasoningMessage reasoningMessage = chatMessages.addReasoningMessage(reasoningText);
-
-		String toolPayload = buildToolPayload(providerName, providerIdentifier, modelIdentifier, modelDisplayName,
-			modelKey, prompt);
-		ToolCallMessage toolMessage = chatMessages.addToolCallMessage(
-			"spring-ai:" + providerIdentifier,
-			toolPayload);
-		toolMessage.setState(ToolCallState.IN_PROGRESS);
 
 		chatInput.setInputEnabled(false);
 
-		ChatRequest chatRequest = new ChatRequest(prompt, modelIdentifier);
+		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
+		String contextualSystemPrompt = buildDynamicSystemContext();
+		ChatRequest chatRequest =
+			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot);
+		ChatMessage userEntry = ChatMessage.user(prompt);
+		messageHistory.add(userEntry);
 
 		new SwingWorker<String, Void>() {
 			@Override
@@ -155,29 +158,20 @@ public class CopilotProvider extends ComponentProvider {
 				try {
 					String response = get();
 					response = response != null ? response.trim() : "";
-					toolMessage.setState(ToolCallState.COMPLETED);
-					toolMessage.setOutputJson(
-						"{\"response\":\"" + escapeJson(truncate(response, 512)) + "\"}");
 					if (response.isEmpty()) {
-						reasoningMessage.setMarkdown(
-							"_No content returned by " + providerName + "._");
 						chatMessages.addAssistantMessage(
 							"(The AI model did not return any content.)");
 					}
 					else {
-						reasoningMessage.setMarkdown(
-							"_Response received from " + providerName + "._");
 						chatMessages.addAssistantMessage(response);
+						messageHistory.add(ChatMessage.assistant(response));
 					}
 				}
 				catch (Exception ex) {
 					String message = extractErrorMessage(ex);
-					toolMessage.setState(ToolCallState.FAILED);
-					toolMessage.setErrorMessage(message);
-					reasoningMessage.setMarkdown(
-						"_Encountered an error while contacting " + providerName + "._");
 					chatMessages.addAssistantMessage("I ran into a problem talking to " +
 						providerName + ": " + message);
+					messageHistory.remove(userEntry);
 					Msg.error(getClass(), "Spring AI chat request failed", ex);
 				}
 			}
@@ -210,8 +204,9 @@ public class CopilotProvider extends ComponentProvider {
 
 			if (!previouslyConfigured || !Objects.equals(previousProviderId, providerId)
 					|| previousError != null) {
-				chatMessages.addAssistantMessage(
+				chatMessages.addSystemMessage(
 					"Connected to **" + providerDisplayName + "** via Spring AI.");
+				messageHistory.clear();
 			}
 		}
 		else {
@@ -223,7 +218,7 @@ public class CopilotProvider extends ComponentProvider {
 			if (chatInitializationError != null
 					&& !chatInitializationError.isBlank()
 					&& !Objects.equals(previousError, chatInitializationError)) {
-				chatMessages.addAssistantMessage(
+				chatMessages.addSystemMessage(
 					"Spring AI is unavailable: " + chatInitializationError);
 			}
 		}
@@ -234,26 +229,6 @@ public class CopilotProvider extends ComponentProvider {
 			return;
 		}
 		SwingUtilities.invokeLater(() -> chatInput.setModelEntries(entries, defaultModelKey));
-	}
-
-	private String escapeJson(String text) {
-		if (text == null) {
-			return "";
-		}
-		return text.replace("\\", "\\\\")
-				.replace("\"", "\\\"")
-				.replace("\r", "\\r")
-				.replace("\n", "\\n");
-	}
-
-	private String truncate(String text, int maxLength) {
-		if (text == null) {
-			return "";
-		}
-		if (text.length() <= maxLength) {
-			return text;
-		}
-		return text.substring(0, Math.max(0, maxLength - 3)) + "...";
 	}
 
 	private String extractErrorMessage(Exception ex) {
@@ -278,23 +253,46 @@ public class CopilotProvider extends ComponentProvider {
 		return providerId != null ? providerId : "unknown";
 	}
 
-	private String buildToolPayload(String providerName, String providerIdentifier, String modelIdentifier,
-			String modelDisplayName, String modelKey, String prompt) {
-		StringBuilder builder = new StringBuilder("{\"provider\":\"")
-				.append(escapeJson(providerName))
-				.append("\",\"providerId\":\"")
-				.append(escapeJson(providerIdentifier))
-				.append("\"");
-		if (modelIdentifier != null) {
-			builder.append(",\"model\":\"").append(escapeJson(modelIdentifier)).append("\"");
+	private String buildDynamicSystemContext() {
+		if (programPlugin == null) {
+			return null;
 		}
-		if (modelDisplayName != null) {
-			builder.append(",\"modelDisplayName\":\"").append(escapeJson(modelDisplayName)).append("\"");
+		Program program = programPlugin.getCurrentProgram();
+		if (program == null) {
+			return "Current context: no program is active.";
 		}
-		if (modelKey != null) {
-			builder.append(",\"modelKey\":\"").append(escapeJson(modelKey)).append("\"");
+
+		StringBuilder builder = new StringBuilder("Current Ghidra context:\n");
+		builder.append("- Program: ").append(program.getName());
+		String executablePath = program.getExecutablePath();
+		if (executablePath != null && !executablePath.isBlank()) {
+			builder.append(" (").append(executablePath).append(")");
 		}
-		builder.append(",\"prompt\":\"").append(escapeJson(prompt)).append("\"}");
-		return builder.toString();
+		builder.append('\n');
+
+		CodeViewerService codeViewer = programPlugin.getTool().getService(CodeViewerService.class);
+		ProgramLocation location = codeViewer != null ? codeViewer.getCurrentLocation() : null;
+		Address address = location != null ? location.getAddress() : null;
+		if (address != null) {
+			builder.append("- Address: ").append(address).append('\n');
+			FunctionManager functionManager = program.getFunctionManager();
+			Function function = functionManager != null ? functionManager.getFunctionContaining(address) : null;
+			if (function != null) {
+				builder.append("- Function: ").append(function.getName())
+					.append(" @ ").append(function.getEntryPoint()).append('\n');
+			}
+		}
+		else if (location != null) {
+			builder.append("- Location: ").append(location).append('\n');
+		}
+
+		ProgramSelection selection = codeViewer != null ? codeViewer.getCurrentSelection() : null;
+		if (selection != null && !selection.isEmpty()) {
+			builder.append("- Selection size: ")
+				.append(selection.getNumAddresses())
+				.append(" addresses\n");
+		}
+
+		return builder.toString().trim();
 	}
 }

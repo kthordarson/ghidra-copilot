@@ -45,13 +45,15 @@ else if (project.hasProperty("GHIDRA_INSTALL_DIR")) {
 	ghidraInstallDir = project.getProperty("GHIDRA_INSTALL_DIR")
 }
 else {
-	ghidraInstallDir = "<REPLACE>"
+	throw new GradleException(
+		"GHIDRA_INSTALL_DIR is not configured. Set the GHIDRA_INSTALL_DIR environment variable or Gradle property to the absolute path of your Ghidra installation."
+	)
 }
 
 task distributeExtension {
 	group = "Ghidra"
 
-	apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
+    apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
 	dependsOn ':buildExtension'
 }
 //----------------------END "DO NOT MODIFY" SECTION-------------------------------
@@ -77,5 +79,14 @@ dependencies {
 	implementation "com.fifesoft:rsyntaxtextarea:3.3.4"
 }
 
+tasks.named('jar') { jarTask ->
+	jarTask.destinationDirectory = file("$projectDir/lib")
+	jarTask.archiveFileName = "${project.name}.jar"
+}
+
+tasks.named('clean') { cleanTask ->
+	cleanTask.delete file("$projectDir/lib/${project.name}.jar")
+}
+
 // Exclude additional files from the built extension
-// Ex: buildExtension.exclude '.idea/**'
+buildExtension.exclude '.idea/**'
