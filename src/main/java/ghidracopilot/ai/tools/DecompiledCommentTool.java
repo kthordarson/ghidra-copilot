@@ -15,6 +15,7 @@ import java.util.function.Function;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import ghidra.app.decompiler.ClangLine;
 import ghidra.app.decompiler.ClangNode;
 import ghidra.app.decompiler.ClangStatement;
 import ghidra.app.decompiler.ClangToken;
@@ -22,13 +23,12 @@ import ghidra.app.decompiler.ClangTokenGroup;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.listing.CommentType;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.pcode.PcodeOp;
-import ghidra.program.model.pcode.Seqnum;
-import ghidra.program.model.listing.CommentType;
+import ghidra.program.model.pcode.SequenceNumber;
 import ghidra.util.task.TaskMonitorAdapter;
 
 /**
@@ -176,7 +176,8 @@ final class DecompiledCommentTool {
 		}));
 	}
 
-	private ToolResult withDecompiledView(Program program, String addressText, Function<DecompiledView, ToolResult> action) {
+	private ToolResult withDecompiledView(Program program, String addressText,
+		Function<DecompiledView, ToolResult> action) {
 		Address address;
 		try {
 			address = context.parseAddress(program, addressText);
@@ -188,7 +189,7 @@ final class DecompiledCommentTool {
 			return ToolResult.error("Unable to parse address: " + addressText);
 		}
 		FunctionManager functions = program.getFunctionManager();
-		Function function = functions.getFunctionContaining(address);
+		ghidra.program.model.listing.Function function = functions.getFunctionContaining(address);
 		if (function == null) {
 			return ToolResult.error("No function found containing address " + context.formatAddress(address));
 		}
@@ -249,9 +250,10 @@ final class DecompiledCommentTool {
 	private record LineInfo(int lineNumber, String text, Address anchor, List<Address> addresses, List<String> tokens) {
 	}
 
-	private record DecompiledView(Function function, List<LineInfo> ordered, Map<Integer, LineInfo> byNumber) {
+	private record DecompiledView(ghidra.program.model.listing.Function function, List<LineInfo> ordered,
+		Map<Integer, LineInfo> byNumber) {
 
-		static DecompiledView from(Program program, Function function) {
+		static DecompiledView from(Program program, ghidra.program.model.listing.Function function) {
 			DecompInterface iface = new DecompInterface();
 			if (!iface.openProgram(program)) {
 				throw new IllegalStateException("Decompiler refused program: " + iface.getLastMessage());
@@ -269,7 +271,11 @@ final class DecompiledCommentTool {
 
 				if (markup != null) {
 					for (ClangToken token : iterable(markup.tokenIterator(true))) {
-						int lineNumber = token.getLineNumber();
+						ClangLine line = token.getLineParent();
+						if (line == null) {
+							continue;
+						}
+						int lineNumber = line.getLineNumber();
 						if (lineNumber < 0) {
 							continue;
 						}
@@ -381,9 +387,9 @@ final class DecompiledCommentTool {
 				considerAddress(statement.getMaxAddress(), true);
 				PcodeOp op = statement.getPcodeOp();
 				if (op != null) {
-					Seqnum seq = op.getSeqnum();
-					if (seq != null) {
-						considerAddress(seq.getTarget(), true);
+					SequenceNumber sequenceNumber = op.getSeqnum();
+					if (sequenceNumber != null) {
+						considerAddress(sequenceNumber.getTarget(), true);
 					}
 				}
 			}
