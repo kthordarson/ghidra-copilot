@@ -134,7 +134,7 @@ final class DecompiledCommentTool {
 		String containingText,
 		@ToolParam(description = "Comment text to apply.", required = true)
 		String comment,
-		@ToolParam(description = "Comment type: plate, pre, post, eol, repeat. Defaults to eol.")
+		@ToolParam(description = "Comment type: plate, pre, post, eol, repeat. Defaults to repeat.")
 		String commentType) {
 		if (comment == null || comment.isBlank()) {
 			return ToolResult.error("Comment text must not be empty.");
@@ -231,7 +231,7 @@ final class DecompiledCommentTool {
 
 	private CommentType resolveCommentType(String commentType) {
 		if (commentType == null || commentType.isBlank()) {
-			return CommentType.EOL;
+			return CommentType.REPEATABLE;
 		}
 		return switch (commentType.trim().toLowerCase(Locale.ROOT)) {
 			case "plate" -> CommentType.PLATE;
@@ -239,7 +239,7 @@ final class DecompiledCommentTool {
 			case "post" -> CommentType.POST;
 			case "repeat", "repeatable" -> CommentType.REPEATABLE;
 			case "eol", "end", "inline", "line" -> CommentType.EOL;
-			default -> CommentType.EOL;
+			default -> CommentType.REPEATABLE;
 		};
 	}
 

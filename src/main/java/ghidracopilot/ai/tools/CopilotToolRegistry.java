@@ -26,6 +26,7 @@ public final class CopilotToolRegistry {
 		CopilotToolContext context = new CopilotToolContext(plugin);
 		registeredTools.set(List.of(
 			new NavigationTool(context),
+			new DisassemblyTool(context),
 			new DecompileTool(context),
 			new DecompiledCommentTool(context),
 			new RenameFunctionTool(context),

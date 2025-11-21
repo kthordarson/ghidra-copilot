@@ -33,7 +33,7 @@ final class AnnotationTool {
 		String addressText,
 		@ToolParam(description = "Comment text to apply. Leave blank or null to clear the comment.")
 		String comment,
-		@ToolParam(description = "Comment type: plate, pre, post, eol, repeat. Defaults to eol.")
+		@ToolParam(description = "Comment type: plate, pre, post, eol, repeat. Defaults to repeat.")
 		String commentType) {
 		return context.withCurrentProgram(program -> doSetComment(program, addressText, comment, commentType));
 	}
@@ -170,16 +170,16 @@ final class AnnotationTool {
 
 	private CommentType resolveCommentType(String commentType) {
 		if (commentType == null || commentType.isBlank()) {
-			return CommentType.EOL;
+			return CommentType.REPEATABLE;
 		}
 		String normalized = commentType.trim().toLowerCase();
 		return switch (normalized) {
 			case "plate" -> CommentType.PLATE;
 			case "pre" -> CommentType.PRE;
 			case "post" -> CommentType.POST;
-			case "repeat" -> CommentType.REPEATABLE;
+			case "repeat", "repeatable" -> CommentType.REPEATABLE;
 			case "eol", "end", "end-of-line" -> CommentType.EOL;
-			default -> CommentType.EOL;
+			default -> CommentType.REPEATABLE;
 		};
 	}
 }

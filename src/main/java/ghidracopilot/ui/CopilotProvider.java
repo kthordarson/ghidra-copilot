@@ -41,22 +41,15 @@ import ghidracopilot.ai.InteractionMode;
 import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
 import ghidracopilot.ai.ToolCallObserver;
 import ghidracopilot.ai.ToolCallUpdate;
+import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidracopilot.ui.components.ChatHeader;
 import ghidracopilot.ui.components.ChatInput;
 import ghidracopilot.ui.components.ChatMessages;
-import ghidracopilot.ui.messages.SystemMessage;
+import ghidracopilot.ui.context.ContextSnapshotBuilder;
 import ghidracopilot.ui.messages.ToolCallMessage;
 import ghidracopilot.ui.messages.ToolCallState;
-import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidra.framework.plugintool.Plugin;
 import ghidra.app.plugin.ProgramPlugin;
-import ghidra.app.services.CodeViewerService;
-import ghidra.program.model.address.Address;
-import ghidra.program.model.listing.Function;
-import ghidra.program.model.listing.FunctionManager;
-import ghidra.program.model.listing.Program;
-import ghidra.program.util.ProgramLocation;
-import ghidra.program.util.ProgramSelection;
 import ghidra.util.Msg;
 import org.springframework.util.StringUtils;
 import resources.Icons;
@@ -178,7 +171,7 @@ public class CopilotProvider extends ComponentProvider {
 		chatInput.setSendingEnabled(false);
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
-		String contextualSystemPrompt = buildDynamicSystemContext(interactionMode);
+		String contextualSystemPrompt = ContextSnapshotBuilder.build(programPlugin, interactionMode);
 		Map<String, ToolCallMessage> activeToolMessages = new ConcurrentHashMap<>();
 		ToolCallObserver toolCallObserver = update -> SwingUtilities.invokeLater(
 			() -> handleToolCallUpdate(update, activeToolMessages));
@@ -330,72 +323,5 @@ public class CopilotProvider extends ComponentProvider {
 
 	private String providerIdentifier() {
 		return providerId != null ? providerId : "unknown";
-	}
-
-	private String buildDynamicSystemContext(InteractionMode mode) {
-		if (programPlugin == null) {
-			return buildModeGuidance(mode);
-		}
-		Program program = programPlugin.getCurrentProgram();
-		if (program == null) {
-			String guidance = buildModeGuidance(mode);
-			return guidance != null
-					? "Current context: no program is active.\n\n" + guidance
-					: "Current context: no program is active.";
-		}
-
-		StringBuilder builder = new StringBuilder("Current Ghidra context:\n");
-		builder.append("- Program: ").append(program.getName());
-		String executablePath = program.getExecutablePath();
-		if (executablePath != null && !executablePath.isBlank()) {
-			builder.append(" (").append(executablePath).append(")");
-		}
-		builder.append('\n');
-
-		CodeViewerService codeViewer = programPlugin.getTool().getService(CodeViewerService.class);
-		ProgramLocation location = codeViewer != null ? codeViewer.getCurrentLocation() : null;
-		Address address = location != null ? location.getAddress() : null;
-		if (address != null) {
-			builder.append("- Address: ").append(address).append('\n');
-			FunctionManager functionManager = program.getFunctionManager();
-			Function function = functionManager != null ? functionManager.getFunctionContaining(address) : null;
-			if (function != null) {
-				builder.append("- Function: ").append(function.getName())
-					.append(" @ ").append(function.getEntryPoint()).append('\n');
-			}
-		}
-		else if (location != null) {
-			builder.append("- Location: ").append(location).append('\n');
-		}
-
-		ProgramSelection selection = codeViewer != null ? codeViewer.getCurrentSelection() : null;
-		if (selection != null && !selection.isEmpty()) {
-			builder.append("- Selection size: ")
-				.append(selection.getNumAddresses())
-				.append(" addresses\n");
-		}
-
-		String guidance = buildModeGuidance(mode);
-		if (guidance != null) {
-			builder.append('\n').append('\n').append(guidance);
-		}
-
-		return builder.toString().trim();
-	}
-
-	private String buildModeGuidance(InteractionMode mode) {
-		if (mode == null) {
-			return null;
-		}
-		return switch (mode) {
-			case ASK -> """
-				Interaction mode: Ask (read-only).
-				Do not request or perform any actions that modify the project. Avoid renaming, patching, annotating, or otherwise changing program data. Use navigation, decompilation, and analysis only.
-				""".trim();
-			case AGENT -> """
-				Interaction mode: Agent (full autonomy).
-				Take initiative to improve clarity: rename functions/variables, apply annotations, and use available tools without asking for confirmation. Prefer focusing on the current function and the functions it directly calls or is called by; read additional functions only when needed for understanding.
-				""".trim();
-		};
 	}
 }
