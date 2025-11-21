@@ -106,5 +106,9 @@ tasks.named('compileTestJava') { compileTest ->
 	compileTest.dependsOn tasks.named('syncJarToLib')
 }
 
+tasks.named('buildExtension') { extTask ->
+	extTask.dependsOn tasks.named('syncJarToLib')
+}
+
 // Exclude additional files from the built extension
 buildExtension.exclude '.idea/**'

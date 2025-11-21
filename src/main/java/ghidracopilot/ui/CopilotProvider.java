@@ -37,6 +37,7 @@ import ghidracopilot.ai.ChatMessage;
 import ghidracopilot.ai.ChatRequest;
 import ghidracopilot.ai.ChatService;
 import ghidracopilot.ai.ChatServiceException;
+import ghidracopilot.ai.InteractionMode;
 import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
 import ghidracopilot.ai.ToolCallObserver;
 import ghidracopilot.ai.ToolCallUpdate;
@@ -75,7 +76,8 @@ public class CopilotProvider extends ComponentProvider {
 	private String chatInitializationError;
 	private String providerDisplayName;
 	private String providerId;
-	private DockingAction sampleAction;
+	private DockingAction newChatAction;
+	private boolean requestInFlight;
 
 	public CopilotProvider(Plugin plugin, String owner) {
 		super(plugin.getTool(), "Ghidra Copilot", owner);
@@ -101,23 +103,51 @@ public class CopilotProvider extends ComponentProvider {
 	}
 
 	private void buildActions() {
-		sampleAction = new DockingAction("Copilot Hello", getOwner()) {
+		newChatAction = new DockingAction("New Chat", getOwner()) {
 			@Override
 			public void actionPerformed(ActionContext context) {
-				Msg.showInfo(getClass(), panel, "Copilot", "Chat action placeholder");
+				resetConversation("Started a new chat.");
 			}
 		};
-		sampleAction.setToolBarData(new ToolBarData(Icons.ADD_ICON, null));
-		sampleAction.markHelpUnnecessary();
-		sampleAction.setEnabled(true);
-		addLocalAction(sampleAction);
+		newChatAction.setToolBarData(new ToolBarData(Icons.ADD_ICON, null));
+		newChatAction.markHelpUnnecessary();
+		newChatAction.setEnabled(true);
+		addLocalAction(newChatAction);
+	}
+
+	private void resetConversation(String reason) {
+		Runnable reset = () -> {
+			chatMessages.clearMessages();
+			messageHistory.clear();
+			chatInput.clearPrompt();
+
+			if (reason != null && !reason.isBlank()) {
+				chatMessages.addSystemMessage(reason);
+			}
+			if (providerDisplayName != null && !providerDisplayName.isBlank()) {
+				chatMessages.addSystemMessage("Connected to **" + providerDisplayName + "**");
+			}
+			else if (chatInitializationError != null && !chatInitializationError.isBlank()) {
+				chatMessages.addSystemMessage("Spring AI is unavailable: " + chatInitializationError);
+			}
+		};
+		if (SwingUtilities.isEventDispatchThread()) {
+			reset.run();
+		}
+		else {
+			SwingUtilities.invokeLater(reset);
+		}
 	}
 
 	private void handleSend() {
+		if (requestInFlight) {
+			return;
+		}
 		String prompt = chatInput.getPromptText().trim();
 		if (prompt.isEmpty()) {
 			return;
 		}
+		InteractionMode interactionMode = chatInput.getInteractionMode();
 		chatMessages.addUserMessage(prompt);
 		chatInput.clearPrompt();
 
@@ -144,15 +174,17 @@ public class CopilotProvider extends ComponentProvider {
 
 		String modelIdentifier = selectedModel != null ? selectedModel.identifier() : null;
 
-		chatInput.setInputEnabled(false);
+		requestInFlight = true;
+		chatInput.setSendingEnabled(false);
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
-		String contextualSystemPrompt = buildDynamicSystemContext();
+		String contextualSystemPrompt = buildDynamicSystemContext(interactionMode);
 		Map<String, ToolCallMessage> activeToolMessages = new ConcurrentHashMap<>();
 		ToolCallObserver toolCallObserver = update -> SwingUtilities.invokeLater(
 			() -> handleToolCallUpdate(update, activeToolMessages));
 		ChatRequest chatRequest =
-			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver);
+			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver,
+				interactionMode);
 		ChatMessage userEntry = ChatMessage.user(prompt);
 		messageHistory.add(userEntry);
 
@@ -164,7 +196,8 @@ public class CopilotProvider extends ComponentProvider {
 
 			@Override
 			protected void done() {
-				chatInput.setInputEnabled(true);
+				requestInFlight = false;
+				chatInput.setSendingEnabled(true);
 				try {
 					String response = get();
 					response = response != null ? response.trim() : "";
@@ -205,6 +238,8 @@ public class CopilotProvider extends ComponentProvider {
 		String previousProviderId = providerId;
 		String previousError = chatInitializationError;
 
+		requestInFlight = false;
+
 		if (result.isSuccess()) {
 			chatService = result.chatService();
 			providerDisplayName = result.providerDisplayName();
@@ -215,7 +250,7 @@ public class CopilotProvider extends ComponentProvider {
 			if (!previouslyConfigured || !Objects.equals(previousProviderId, providerId)
 					|| previousError != null) {
 				chatMessages.addSystemMessage(
-					"Connected to **" + providerDisplayName + "** via Spring AI.");
+					"Connected to **" + providerDisplayName + "**");
 				messageHistory.clear();
 			}
 		}
@@ -297,13 +332,16 @@ public class CopilotProvider extends ComponentProvider {
 		return providerId != null ? providerId : "unknown";
 	}
 
-	private String buildDynamicSystemContext() {
+	private String buildDynamicSystemContext(InteractionMode mode) {
 		if (programPlugin == null) {
-			return null;
+			return buildModeGuidance(mode);
 		}
 		Program program = programPlugin.getCurrentProgram();
 		if (program == null) {
-			return "Current context: no program is active.";
+			String guidance = buildModeGuidance(mode);
+			return guidance != null
+					? "Current context: no program is active.\n\n" + guidance
+					: "Current context: no program is active.";
 		}
 
 		StringBuilder builder = new StringBuilder("Current Ghidra context:\n");
@@ -337,6 +375,27 @@ public class CopilotProvider extends ComponentProvider {
 				.append(" addresses\n");
 		}
 
+		String guidance = buildModeGuidance(mode);
+		if (guidance != null) {
+			builder.append('\n').append('\n').append(guidance);
+		}
+
 		return builder.toString().trim();
+	}
+
+	private String buildModeGuidance(InteractionMode mode) {
+		if (mode == null) {
+			return null;
+		}
+		return switch (mode) {
+			case ASK -> """
+				Interaction mode: Ask (read-only).
+				Do not request or perform any actions that modify the project. Avoid renaming, patching, annotating, or otherwise changing program data. Use navigation, decompilation, and analysis only.
+				""".trim();
+			case AGENT -> """
+				Interaction mode: Agent (full autonomy).
+				Take initiative to improve clarity: rename functions/variables, apply annotations, and use available tools without asking for confirmation. Prefer focusing on the current function and the functions it directly calls or is called by; read additional functions only when needed for understanding.
+				""".trim();
+		};
 	}
 }

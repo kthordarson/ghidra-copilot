@@ -110,7 +110,8 @@ class SpeechBubblePanel extends JPanel {
 					tailTop = tailBottom - tailSpan;
 				}
 				double tailMid = (tailTop + tailBottom) / 2.0;
-				double bodyEdgeX = tailLeft ? body.getX() : body.getX() + bodyWidth;
+				double bodyEdgeX = tailLeft ? body.getX() + TAIL_OVERLAP :
+					body.getX() + bodyWidth - TAIL_OVERLAP;
 				double tipX = tailLeft ? strokeOffset : width - strokeOffset;
 
 				Path2D tail = new Path2D.Double(Path2D.WIND_NON_ZERO);

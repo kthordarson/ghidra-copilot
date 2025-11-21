@@ -16,12 +16,16 @@
 package ghidracopilot.ui.components;
 
 import java.awt.BorderLayout;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.ActionListener;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
+import javax.swing.BorderFactory;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JList;
@@ -30,6 +34,7 @@ import javax.swing.JTextField;
 import javax.swing.border.EmptyBorder;
 
 import ghidracopilot.model.ModelRegistry.ModelEntry;
+import ghidracopilot.ai.InteractionMode;
 
 /**
  * Input area for composing chat requests to Copilot.
@@ -40,9 +45,10 @@ public class ChatInput extends JPanel {
 	private final JButton sendButton;
 	private final JComboBox<ModelItem> modelCombo;
 	private final ModelComboBoxModel modelComboModel;
+	private final JComboBox<InteractionMode> modeCombo;
 
 	public ChatInput() {
-		super(new BorderLayout(8, 0));
+		super(new BorderLayout());
 		setBorder(new EmptyBorder(8, 10, 10, 10));
 
 		promptField = new JTextField();
@@ -53,12 +59,27 @@ public class ChatInput extends JPanel {
 		modelCombo.setPrototypeDisplayValue(ModelItem.prototype());
 		modelCombo.putClientProperty("JComboBox.isTableCellEditor", Boolean.TRUE);
 
-		JPanel inputPanel = new JPanel(new BorderLayout(8, 0));
-		inputPanel.add(modelCombo, BorderLayout.WEST);
-		inputPanel.add(promptField, BorderLayout.CENTER);
+		modeCombo = new JComboBox<>(InteractionMode.values());
+		modeCombo.setPrototypeDisplayValue(InteractionMode.AGENT);
+		modeCombo.setSelectedItem(InteractionMode.ASK);
 
-		add(inputPanel, BorderLayout.CENTER);
-		add(sendButton, BorderLayout.EAST);
+		JPanel promptRow = new JPanel(new BorderLayout(8, 0));
+		promptRow.add(promptField, BorderLayout.CENTER);
+		promptRow.add(sendButton, BorderLayout.EAST);
+
+		JPanel controlsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+		controlsRow.add(modelCombo);
+		controlsRow.add(modeCombo);
+		controlsRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
+
+		JPanel stack = new JPanel();
+		stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
+		stack.setOpaque(false);
+		stack.add(promptRow);
+		stack.add(Box.createVerticalStrut(0));
+		stack.add(controlsRow);
+
+		add(stack, BorderLayout.CENTER);
 	}
 
 	public void addSendAction(ActionListener listener) {
@@ -68,6 +89,11 @@ public class ChatInput extends JPanel {
 
 	public String getPromptText() {
 		return promptField.getText();
+	}
+
+	public InteractionMode getInteractionMode() {
+		Object selected = modeCombo.getSelectedItem();
+		return selected instanceof InteractionMode mode ? mode : InteractionMode.ASK;
 	}
 
 	public ModelEntry getSelectedModel() {
@@ -86,7 +112,12 @@ public class ChatInput extends JPanel {
 	public void setInputEnabled(boolean enabled) {
 		promptField.setEnabled(enabled);
 		sendButton.setEnabled(enabled);
+		modeCombo.setEnabled(enabled);
 		updateComboEnabledState();
+	}
+
+	public void setSendingEnabled(boolean enabled) {
+		sendButton.setEnabled(enabled);
 	}
 
 	private void updateComboEnabledState() {

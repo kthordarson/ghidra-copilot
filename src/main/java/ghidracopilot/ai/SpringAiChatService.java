@@ -58,7 +58,8 @@ public class SpringAiChatService implements ChatService {
 	public String chat(ChatRequest request) throws ChatServiceException {
 		try {
 			Objects.requireNonNull(request, "request must not be null");
-			ToolCallingChatOptions toolOptions = prepareToolOptions(buildOptions(request.modelId()));
+			ToolCallingChatOptions toolOptions =
+				prepareToolOptions(buildOptions(request.modelId()), request.interactionMode());
 			Prompt prompt = new Prompt(buildConversation(request), toolOptions);
 			ChatResponse chatResponse = chatModel.call(prompt);
 
@@ -191,7 +192,7 @@ public class SpringAiChatService implements ChatService {
 		return messages;
 	}
 
-	private ToolCallingChatOptions prepareToolOptions(ChatOptions baseOptions) {
+	private ToolCallingChatOptions prepareToolOptions(ChatOptions baseOptions, InteractionMode mode) {
 		ToolCallingChatOptions toolOptions;
 		if (baseOptions instanceof ToolCallingChatOptions tcOptions) {
 			toolOptions = tcOptions;
@@ -202,11 +203,16 @@ public class SpringAiChatService implements ChatService {
 
 		toolOptions.setInternalToolExecutionEnabled(Boolean.FALSE);
 		var existingCallbacks = toolOptions.getToolCallbacks();
-		if (existingCallbacks == null || existingCallbacks.isEmpty()) {
-			var registeredTools = CopilotToolRegistry.tools();
+		var registeredTools = CopilotToolRegistry.toolsForMode(mode);
+		boolean overrideCallbacks = existingCallbacks == null || existingCallbacks.isEmpty() ||
+			(mode != null && mode.isReadOnly());
+		if (overrideCallbacks) {
 			if (registeredTools != null && !registeredTools.isEmpty()) {
 				var callbacks = ToolCallbacks.from(registeredTools.toArray());
 				toolOptions.setToolCallbacks(Arrays.asList(callbacks));
+			}
+			else {
+				toolOptions.setToolCallbacks(List.of());
 			}
 		}
 		return toolOptions;

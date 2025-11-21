@@ -19,12 +19,14 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Font;
 
+import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.LineBorder;
 
 /**
  * Message bubble used to display assistant tool invocations.
@@ -51,7 +53,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 	private String errorMessage;
 
 	public ToolCallMessage(String toolName, String inputJson) {
-		super("", ChatAlignment.LEFT, BACKGROUND, BORDER, TEXT);
+		super("", ChatAlignment.LEFT, BACKGROUND, BORDER, TEXT, false);
 		this.toolName = toolName;
 		this.inputJson = inputJson;
 		this.outputJson = "";
@@ -61,6 +63,11 @@ public class ToolCallMessage extends AbstractChatMessage {
 		JPanel bubble = getBubblePanel();
 		bubble.removeAll();
 		bubble.setLayout(new BorderLayout(0, 8));
+		bubble.setOpaque(true);
+		bubble.setBackground(BACKGROUND);
+		bubble.setBorder(BorderFactory.createCompoundBorder(
+			new LineBorder(BORDER, 1, true),
+			new EmptyBorder(10, 12, 10, 12)));
 
 		JPanel header = new JPanel(new BorderLayout(8, 0));
 		header.setOpaque(false);
@@ -68,6 +75,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 		toolLabel = new JLabel(TOOL_ICON + " " + toolName);
 		toolLabel.setFont(toolLabel.getFont().deriveFont(Font.BOLD));
+		toolLabel.setForeground(TEXT);
 		header.add(toolLabel, BorderLayout.WEST);
 
 		statusLabel = new JLabel();

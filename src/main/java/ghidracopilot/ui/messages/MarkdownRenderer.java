@@ -141,13 +141,18 @@ public final class MarkdownRenderer {
 	}
 
 	private static void addCodeBlock(JPanel container, CodeBlockData data) {
-		RSyntaxTextArea textArea = new RSyntaxTextArea(data.literal());
+		RSyntaxTextArea textArea = new RSyntaxTextArea(data.literal()) {
+			@Override
+			public boolean getScrollableTracksViewportWidth() {
+				return true;
+			}
+		};
 		textArea.setSyntaxEditingStyle(resolveSyntax(data.info()));
 		textArea.setEditable(false);
 		textArea.setAntiAliasingEnabled(true);
 		textArea.setCodeFoldingEnabled(false);
 		textArea.setLineWrap(true);
-		textArea.setWrapStyleWord(true);
+		textArea.setWrapStyleWord(false);
 		textArea.setBorder(new EmptyBorder(6, 8, 6, 8));
 		textArea.setBackground(new Color(0xf7f9fb));
 
@@ -168,7 +173,10 @@ public final class MarkdownRenderer {
 		HTMLEditorKit kit = new HTMLEditorKit();
 		StyleSheet styleSheet = kit.getStyleSheet();
 		styleSheet.addRule(buildBodyRule(textColor));
+		styleSheet.addRule("body, p, li, code, pre, table, td, th { word-break: break-word; overflow-wrap:anywhere; }");
 		styleSheet.addRule("pre, code { white-space: pre-wrap; word-wrap: break-word; overflow-wrap:anywhere; }");
+		styleSheet.addRule("table { table-layout: fixed; width: 100%; }");
+		styleSheet.addRule("img, table { max-width: 100%; }");
 		pane.setEditorKit(kit);
 		pane.setContentType("text/html");
 		pane.setText("<html><body>" + html + "</body></html>");
@@ -190,7 +198,7 @@ public final class MarkdownRenderer {
 				.append(String.format("%02x%02x%02x", textColor.getRed(), textColor.getGreen(), textColor.getBlue()))
 				.append(';');
 		}
-		builder.append('}');
+		builder.append(" word-break: break-word; overflow-wrap:anywhere; box-sizing:border-box; max-width:100%; }");
 		return builder.toString();
 	}
 

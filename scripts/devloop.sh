@@ -6,5 +6,5 @@ if [[ -z "${GHIDRA_INSTALL_DIR:-}" ]]; then
   exit 1
 fi
 
-echo "Building GhidraCopilot continuously. Press Ctrl+C to stop."
-exec gradle --continuous jar
+echo "Building GhidraCopilot continuously (jar + syncJarToLib). Press Ctrl+C to stop."
+exec ./gradlew --continuous jar syncJarToLib

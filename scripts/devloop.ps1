@@ -10,5 +10,5 @@ if (-not (Test-Path $gradleWrapper)) {
     exit 1
 }
 
-Write-Host "Starting Gradle continuous build via gradlew (Ctrl+C to stop)..."
-& $gradleWrapper --continuous classes
+Write-Host "Starting Gradle continuous jar build (Ctrl+C to stop)..."
+& $gradleWrapper --continuous jar syncJarToLib

@@ -4,9 +4,10 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import ghidracopilot.GhidraCopilotPlugin;
+import ghidracopilot.ai.InteractionMode;
 
 /**
- * Holds the set of tool objects that are exposed to the LLM via Spring AI.
+ * Holds the set of tool objects that are exposed to the LLM.
  */
 public final class CopilotToolRegistry {
 
@@ -28,6 +29,7 @@ public final class CopilotToolRegistry {
 			new DecompileTool(context),
 			new DecompiledCommentTool(context),
 			new RenameFunctionTool(context),
+			new RenameVariableTool(context),
 			new SymbolSearchTool(context),
 			new ReferenceTool(context),
 			new ControlFlowTool(context),
@@ -35,11 +37,30 @@ public final class CopilotToolRegistry {
 			new AnnotationTool(context),
 			new PatchTool(context),
 			new DataUsageTool(context),
+			new DataStringTool(context),
 			new ProgramMetadataTool(context)));
 	}
 
 	public static List<Object> tools() {
 		return registeredTools.get();
+	}
+
+	public static List<Object> toolsForMode(InteractionMode mode) {
+		List<Object> tools = registeredTools.get();
+		if (mode == null || !mode.isReadOnly()) {
+			return tools;
+		}
+		return tools.stream()
+				.filter(CopilotToolRegistry::isReadOnlyTool)
+				.toList();
+	}
+
+	private static boolean isReadOnlyTool(Object tool) {
+		return !(tool instanceof AnnotationTool)
+			&& !(tool instanceof PatchTool)
+			&& !(tool instanceof RenameFunctionTool)
+			&& !(tool instanceof RenameVariableTool)
+			&& !(tool instanceof DecompiledCommentTool);
 	}
 
 	public static void clear() {
