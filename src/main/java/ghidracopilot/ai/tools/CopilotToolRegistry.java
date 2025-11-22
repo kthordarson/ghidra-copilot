@@ -30,7 +30,9 @@ public final class CopilotToolRegistry {
 			new DecompileTool(context),
 			new DecompiledCommentTool(context),
 			new RenameFunctionTool(context),
+			new RetypeFunctionTool(context),
 			new RenameVariableTool(context),
+			new StructureTool(context),
 			new SymbolSearchTool(context),
 			new ReferenceTool(context),
 			new ControlFlowTool(context),
@@ -39,7 +41,8 @@ public final class CopilotToolRegistry {
 			new PatchTool(context),
 			new DataUsageTool(context),
 			new DataStringTool(context),
-			new ProgramMetadataTool(context)));
+			new ProgramMetadataTool(context),
+			new AnalysisTool(context)));
 	}
 
 	public static List<Object> tools() {
@@ -59,8 +62,11 @@ public final class CopilotToolRegistry {
 	private static boolean isReadOnlyTool(Object tool) {
 		return !(tool instanceof AnnotationTool)
 			&& !(tool instanceof PatchTool)
+			&& !(tool instanceof AnalysisTool)
 			&& !(tool instanceof RenameFunctionTool)
+			&& !(tool instanceof RetypeFunctionTool)
 			&& !(tool instanceof RenameVariableTool)
+			&& !(tool instanceof StructureTool)
 			&& !(tool instanceof DecompiledCommentTool);
 	}
 

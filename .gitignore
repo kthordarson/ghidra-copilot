@@ -93,3 +93,5 @@ lib/
 
 vendor/
 /.gradle*
+
+samples/

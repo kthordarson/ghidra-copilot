@@ -41,6 +41,7 @@ import ghidracopilot.ai.InteractionMode;
 import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
 import ghidracopilot.ai.ToolCallObserver;
 import ghidracopilot.ai.ToolCallUpdate;
+import ghidracopilot.ai.ChatServiceCancelledException;
 import ghidracopilot.model.ModelRegistry.ModelEntry;
 import ghidracopilot.ui.components.ChatHeader;
 import ghidracopilot.ui.components.ChatInput;
@@ -71,6 +72,8 @@ public class CopilotProvider extends ComponentProvider {
 	private String providerId;
 	private DockingAction newChatAction;
 	private boolean requestInFlight;
+	private SwingWorker<String, Void> activeRequest;
+	private boolean stopRequested;
 
 	public CopilotProvider(Plugin plugin, String owner) {
 		super(plugin.getTool(), "Ghidra Copilot", owner);
@@ -90,6 +93,7 @@ public class CopilotProvider extends ComponentProvider {
 		panel.add(chatInput, BorderLayout.SOUTH);
 
 		chatInput.addSendAction(e -> handleSend());
+		chatInput.addStopAction(e -> handleStop());
 		chatInput.setInputEnabled(false);
 
 		buildActions();
@@ -136,6 +140,7 @@ public class CopilotProvider extends ComponentProvider {
 		if (requestInFlight) {
 			return;
 		}
+		stopRequested = false;
 		String prompt = chatInput.getPromptText().trim();
 		if (prompt.isEmpty()) {
 			return;
@@ -168,6 +173,7 @@ public class CopilotProvider extends ComponentProvider {
 		String modelIdentifier = selectedModel != null ? selectedModel.identifier() : null;
 
 		requestInFlight = true;
+		chatInput.setRequestInProgress(true);
 		chatInput.setSendingEnabled(false);
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
@@ -181,7 +187,7 @@ public class CopilotProvider extends ComponentProvider {
 		ChatMessage userEntry = ChatMessage.user(prompt);
 		messageHistory.add(userEntry);
 
-		new SwingWorker<String, Void>() {
+		activeRequest = new SwingWorker<String, Void>() {
 			@Override
 			protected String doInBackground() throws Exception {
 				return chatService.chat(chatRequest);
@@ -190,7 +196,13 @@ public class CopilotProvider extends ComponentProvider {
 			@Override
 			protected void done() {
 				requestInFlight = false;
+				activeRequest = null;
+				chatInput.setRequestInProgress(false);
 				chatInput.setSendingEnabled(true);
+				if (isCancelled() || stopRequested) {
+					handleCancellation(userEntry);
+					return;
+				}
 				try {
 					String response = get();
 					response = response != null ? response.trim() : "";
@@ -204,6 +216,10 @@ public class CopilotProvider extends ComponentProvider {
 					}
 				}
 				catch (Exception ex) {
+					if (stopRequested || isCancellation(ex)) {
+						handleCancellation(userEntry);
+						return;
+					}
 					String message = extractErrorMessage(ex);
 					chatMessages.addAssistantMessage("I ran into a problem talking to " +
 						providerName + ": " + message);
@@ -211,7 +227,9 @@ public class CopilotProvider extends ComponentProvider {
 					Msg.error(getClass(), "Spring AI chat request failed", ex);
 				}
 			}
-		}.execute();
+		};
+
+		activeRequest.execute();
 	}
 
 	@Override
@@ -308,6 +326,9 @@ public class CopilotProvider extends ComponentProvider {
 		if (cause instanceof java.util.concurrent.ExecutionException && cause.getCause() != null) {
 			cause = cause.getCause();
 		}
+		if (cause instanceof ChatServiceCancelledException || cause instanceof InterruptedException) {
+			return "Request was cancelled.";
+		}
 		if (cause instanceof ChatServiceException && cause.getMessage() != null) {
 			return cause.getMessage();
 		}
@@ -315,6 +336,36 @@ public class CopilotProvider extends ComponentProvider {
 			return cause.getMessage();
 		}
 		return "Unexpected error (see log for details).";
+	}
+
+	private void handleStop() {
+		if (!requestInFlight) {
+			return;
+		}
+		stopRequested = true;
+		SwingWorker<String, Void> worker = activeRequest;
+		if (worker != null) {
+			worker.cancel(true);
+		}
+	}
+
+	private void handleCancellation(ChatMessage userEntry) {
+		messageHistory.remove(userEntry);
+		chatMessages.addSystemMessage("Stopped the request.");
+		stopRequested = false;
+	}
+
+	private boolean isCancellation(Throwable ex) {
+		Throwable cursor = ex;
+		while (cursor != null) {
+			if (cursor instanceof java.util.concurrent.CancellationException ||
+				cursor instanceof InterruptedException ||
+				cursor instanceof ChatServiceCancelledException) {
+				return true;
+			}
+			cursor = cursor.getCause();
+		}
+		return false;
 	}
 
 	private String providerName() {

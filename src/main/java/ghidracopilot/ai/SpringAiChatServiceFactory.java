@@ -41,6 +41,12 @@ public final class SpringAiChatServiceFactory {
 			or when it is essential to avoid confusion."""
 			.strip();
 
+	static {
+		// Avoid JDK module access warnings/failures when Netty tries to reach jdk.internal.misc.Unsafe.
+		System.setProperty("io.netty.tryReflectionSetAccessible", "false");
+		System.setProperty("io.netty.noUnsafe", "true");
+	}
+
 	private SpringAiChatServiceFactory() {
 		// utility
 	}

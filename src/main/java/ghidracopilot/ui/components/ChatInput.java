@@ -46,6 +46,10 @@ public class ChatInput extends JPanel {
 	private final JComboBox<ModelItem> modelCombo;
 	private final ModelComboBoxModel modelComboModel;
 	private final JComboBox<InteractionMode> modeCombo;
+	private boolean requestInProgress;
+	private boolean sendEnabled = true;
+	private ActionListener sendAction;
+	private ActionListener stopAction;
 
 	public ChatInput() {
 		super(new BorderLayout());
@@ -83,8 +87,19 @@ public class ChatInput extends JPanel {
 	}
 
 	public void addSendAction(ActionListener listener) {
+		if (listener == null) {
+			return;
+		}
+		sendAction = listener;
 		sendButton.addActionListener(listener);
 		promptField.addActionListener(listener);
+	}
+
+	public void addStopAction(ActionListener listener) {
+		stopAction = listener;
+		if (requestInProgress) {
+			updateButtonState();
+		}
 	}
 
 	public String getPromptText() {
@@ -111,18 +126,49 @@ public class ChatInput extends JPanel {
 
 	public void setInputEnabled(boolean enabled) {
 		promptField.setEnabled(enabled);
-		sendButton.setEnabled(enabled);
 		modeCombo.setEnabled(enabled);
+		sendEnabled = enabled;
+		updateButtonState();
 		updateComboEnabledState();
 	}
 
 	public void setSendingEnabled(boolean enabled) {
-		sendButton.setEnabled(enabled);
+		sendEnabled = enabled;
+		if (!requestInProgress) {
+			updateButtonState();
+		}
+	}
+
+	public void setRequestInProgress(boolean inProgress) {
+		requestInProgress = inProgress;
+		updateButtonState();
 	}
 
 	private void updateComboEnabledState() {
 		boolean enableCombo = promptField.isEnabled() && modelComboModel.hasSelectableModels();
 		modelCombo.setEnabled(enableCombo);
+	}
+
+	private void updateButtonState() {
+		sendButton.setText(requestInProgress ? "Stop" : "Send");
+		resetButtonListeners(requestInProgress ? stopAction : sendAction);
+		boolean enabled = promptField.isEnabled();
+		if (requestInProgress) {
+			enabled = enabled && stopAction != null;
+		}
+		else {
+			enabled = enabled && sendEnabled;
+		}
+		sendButton.setEnabled(enabled);
+	}
+
+	private void resetButtonListeners(ActionListener targetListener) {
+		for (ActionListener existing : sendButton.getActionListeners()) {
+			sendButton.removeActionListener(existing);
+		}
+		if (targetListener != null) {
+			sendButton.addActionListener(targetListener);
+		}
 	}
 
 	private static final class ModelComboBoxModel extends javax.swing.AbstractListModel<ModelItem>

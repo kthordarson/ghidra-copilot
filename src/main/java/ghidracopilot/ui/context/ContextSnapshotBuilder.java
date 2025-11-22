@@ -8,6 +8,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import java.lang.reflect.Method;
 
 import docking.ComponentProvider;
 import ghidracopilot.ai.InteractionMode;
@@ -68,6 +69,7 @@ public final class ContextSnapshotBuilder {
 
 		var tool = programPlugin.getTool();
 		ComponentProvider activeProvider = tool != null ? tool.getActiveComponentProvider() : null;
+		DecompilerLocationInfo decompLocation = resolveDecompilerLocation(activeProvider, tool);
 		if (activeProvider != null) {
 			ViewInfo viewInfo = ViewInfo.from(activeProvider);
 			if (!viewInfo.isChat()) {
@@ -88,11 +90,12 @@ public final class ContextSnapshotBuilder {
 
 		CodeViewerService codeViewer = tool != null ? tool.getService(CodeViewerService.class) : null;
 		ProgramLocation location = codeViewer != null ? codeViewer.getCurrentLocation() : null;
-		Address address = location != null ? location.getAddress() : null;
-		if (address != null) {
-			builder.append("- Address: ").append(address).append('\n');
-			FunctionManager functionManager = program.getFunctionManager();
-			Function function = functionManager != null ? functionManager.getFunctionContaining(address) : null;
+		ProgramSelection selection = codeViewer != null ? codeViewer.getCurrentSelection() : null;
+				Address address = location != null ? location.getAddress() : null;
+				if (address != null) {
+					builder.append("- Address: ").append(address).append('\n');
+					FunctionManager functionManager = program.getFunctionManager();
+					Function function = functionManager != null ? functionManager.getFunctionContaining(address) : null;
 			if (function != null) {
 				builder.append("- Function: ").append(function.getName())
 					.append(" @ ").append(function.getEntryPoint()).append('\n');
@@ -101,10 +104,20 @@ public final class ContextSnapshotBuilder {
 					builder.append("\nDisassembly (current function, current line marked with '>'):\n");
 					builder.append(disassembly).append('\n');
 				}
-				Snippet decompilation = buildDecompiledSnippet(program, function, address);
+					Integer caretLine = decompLocation != null ? decompLocation.lineNumber() : null;
+					Snippet decompilation =
+						buildDecompiledSnippet(program, function, address, selection, caretLine, decompLocation);
 				if (decompilation != null && StringUtils.hasText(decompilation.text())) {
 					if (decompilation.highlightLine() > 0) {
 						builder.append("- Decompiler cursor line: ").append(decompilation.highlightLine()).append('\n');
+					}
+					if (decompLocation != null && StringUtils.hasText(decompLocation.tokenText())) {
+						builder.append("- Decompiler token: \"").append(decompLocation.tokenText()).append('"');
+						if (decompLocation.columnStart() != null && decompLocation.columnEnd() != null) {
+							builder.append(" (cols ").append(decompLocation.columnStart()).append('-')
+								.append(decompLocation.columnEnd()).append(')');
+						}
+						builder.append('\n');
 					}
 					builder.append("\nDecompiler (current function, windowed to ~")
 						.append(MAX_DECOMPILED_LINES)
@@ -117,7 +130,6 @@ public final class ContextSnapshotBuilder {
 			builder.append("- Location: ").append(location).append('\n');
 		}
 
-		ProgramSelection selection = codeViewer != null ? codeViewer.getCurrentSelection() : null;
 		if (selection != null && !selection.isEmpty()) {
 			builder.append("- Selection size: ")
 				.append(selection.getNumAddresses())
@@ -172,7 +184,8 @@ public final class ContextSnapshotBuilder {
 		return snippet.toString().stripTrailing();
 	}
 
-	private static Snippet buildDecompiledSnippet(Program program, Function function, Address currentAddress) {
+	private static Snippet buildDecompiledSnippet(Program program, Function function, Address currentAddress,
+			ProgramSelection selection, Integer caretLineOverride, DecompilerLocationInfo locationInfo) {
 		DecompInterface iface = new DecompInterface();
 		try {
 			if (!iface.openProgram(program)) {
@@ -193,7 +206,10 @@ public final class ContextSnapshotBuilder {
 			}
 
 			Map<Integer, Set<Address>> addressesByLine = mapAddresses(results.getCCodeMarkup());
-			int highlightLine = findLineForAddress(addressesByLine, currentAddress);
+			Set<Integer> selectedLines = findSelectedLines(addressesByLine, selection);
+			int highlightLine = caretLineOverride != null && caretLineOverride.intValue() > 0
+				? caretLineOverride.intValue()
+				: findLineForAddress(addressesByLine, currentAddress);
 
 			int totalLines = lines.size();
 			int limit = Math.max(1, MAX_DECOMPILED_LINES);
@@ -214,8 +230,27 @@ public final class ContextSnapshotBuilder {
 
 			StringBuilder sb = new StringBuilder();
 			for (int i = start; i <= end; i++) {
-				String prefix = (i == highlightLine) ? "> " : "  ";
-				String text = lines.get(i - 1);
+				boolean isHighlight = i == highlightLine;
+				boolean isSelected = selectedLines.contains(i);
+				String prefix = isHighlight ? "> " : (isSelected ? "* " : "  ");
+				String rawText = lines.get(i - 1);
+				String text = rawText;
+				if (isHighlight && locationInfo != null && locationInfo.lineNumber() != null
+					&& locationInfo.lineNumber().intValue() == i
+					&& locationInfo.columnStart() != null && locationInfo.columnEnd() != null) {
+					int selStart = Math.max(0, locationInfo.columnStart().intValue());
+					int selEnd = Math.max(selStart, locationInfo.columnEnd().intValue());
+					int len = rawText.length();
+					selStart = Math.min(selStart, len);
+					selEnd = Math.min(selEnd, len);
+					if (selEnd > selStart) {
+						text = rawText.substring(0, selStart)
+							+ "[["
+							+ rawText.substring(selStart, selEnd)
+							+ "]]"
+							+ rawText.substring(selEnd);
+					}
+				}
 				sb.append(prefix)
 					.append(String.format(Locale.ROOT, "%4d | ", i))
 					.append(text)
@@ -275,6 +310,22 @@ public final class ContextSnapshotBuilder {
 			.orElse(-1);
 	}
 
+	private static Set<Integer> findSelectedLines(Map<Integer, Set<Address>> addressesByLine, ProgramSelection selection) {
+		Set<Integer> selected = new HashSet<>();
+		if (selection == null || selection.isEmpty()) {
+			return selected;
+		}
+		for (Map.Entry<Integer, Set<Address>> entry : addressesByLine.entrySet()) {
+			for (Address addr : entry.getValue()) {
+				if (selection.contains(addr)) {
+					selected.add(entry.getKey());
+					break;
+				}
+			}
+		}
+		return selected;
+	}
+
 	private static boolean isValidAddress(Address address) {
 		return address != null && !Address.NO_ADDRESS.equals(address);
 	}
@@ -309,6 +360,87 @@ public final class ContextSnapshotBuilder {
 	}
 
 	private record Snippet(String text, int highlightLine) {
+	}
+
+	private record DecompilerLocationInfo(Integer lineNumber, String tokenText, Integer columnStart, Integer columnEnd) {
+	}
+
+	private static DecompilerLocationInfo resolveDecompilerLocation(ComponentProvider activeProvider,
+			ghidra.framework.plugintool.PluginTool tool) {
+		ComponentProvider target = activeProvider;
+		if (target == null) {
+			return null;
+		}
+		try {
+			Object panel = invoke(target, "getDecompilerPanel");
+			if (panel == null) {
+				return null;
+			}
+			Object location = invoke(panel, "getCurrentLocation");
+			if (location == null) {
+				return null;
+			}
+			Integer line = extractInt(location, "getDecompiledLineNumber");
+			if (line == null) {
+				line = extractInt(location, "getLineNumber");
+			}
+			String token = extractString(location, "getTokenText");
+			Integer colStart = extractInt(location, "getCharIndex");
+			Integer colEnd = extractInt(location, "getCharIndexEnd");
+			return new DecompilerLocationInfo(line, token, colStart, colEnd);
+		}
+		catch (Exception ex) {
+			Msg.debug(ContextSnapshotBuilder.class, "Unable to resolve decompiler location", ex);
+			return null;
+		}
+	}
+
+	private static Object invoke(Object target, String method) throws Exception {
+		Method m = findZeroArgMethod(target.getClass(), method);
+		if (m == null) {
+			return null;
+		}
+		return m.invoke(target);
+	}
+
+	private static Method findZeroArgMethod(Class<?> type, String name) {
+		for (Class<?> cursor = type; cursor != null; cursor = cursor.getSuperclass()) {
+			try {
+				Method method = cursor.getDeclaredMethod(name);
+				method.setAccessible(true);
+				return method;
+			}
+			catch (NoSuchMethodException ignored) {
+				// ignore and continue search
+			}
+		}
+		return null;
+	}
+
+	private static Integer extractInt(Object target, String method) {
+		try {
+			Object value = invoke(target, method);
+			if (value instanceof Number number) {
+				return number.intValue();
+			}
+		}
+		catch (Exception ignored) {
+			// ignore and fallback
+		}
+		return null;
+	}
+
+	private static String extractString(Object target, String method) {
+		try {
+			Object value = invoke(target, method);
+			if (value instanceof String s) {
+				return s;
+			}
+		}
+		catch (Exception ignored) {
+			// ignore and fallback
+		}
+		return null;
 	}
 
 	private static String buildSelectionSnippet(Program program, ProgramSelection selection, Address currentAddress) {

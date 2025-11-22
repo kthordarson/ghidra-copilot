@@ -58,12 +58,16 @@ public class SpringAiChatService implements ChatService {
 	public String chat(ChatRequest request) throws ChatServiceException {
 		try {
 			Objects.requireNonNull(request, "request must not be null");
+			checkCancelled();
 			ToolCallingChatOptions toolOptions =
 				prepareToolOptions(buildOptions(request.modelId()), request.interactionMode());
 			Prompt prompt = new Prompt(buildConversation(request), toolOptions);
+			checkCancelled();
 			ChatResponse chatResponse = chatModel.call(prompt);
+			checkCancelled();
 
 			while (chatResponse != null && chatResponse.hasToolCalls()) {
+				checkCancelled();
 				AssistantMessage assistantMessage = chatResponse.getResult() != null
 						? chatResponse.getResult().getOutput()
 						: null;
@@ -77,9 +81,11 @@ public class SpringAiChatService implements ChatService {
 
 				ToolExecutionResult executionResult;
 				try {
+					checkCancelled();
 					executionResult = toolCallingManager.executeToolCalls(prompt, chatResponse);
 				}
 				catch (Exception ex) {
+					checkCancelled();
 					notifyFailure(request, assistantMessage, ex);
 					throw new ChatServiceException(ex.getMessage() != null
 							? ex.getMessage()
@@ -89,9 +95,12 @@ public class SpringAiChatService implements ChatService {
 				notifyCompletion(request, assistantMessage, executionResult);
 
 				prompt = new Prompt(executionResult.conversationHistory(), toolOptions);
+				checkCancelled();
 				chatResponse = chatModel.call(prompt);
+				checkCancelled();
 			}
 
+			checkCancelled();
 			return extractAssistantText(chatResponse);
 		}
 		catch (ChatServiceException ex) {
@@ -303,5 +312,13 @@ public class SpringAiChatService implements ChatService {
 			return "{}";
 		}
 		return json.trim();
+	}
+
+	private void checkCancelled() throws ChatServiceCancelledException {
+		if (Thread.currentThread().isInterrupted()) {
+			throw new ChatServiceCancelledException(
+				"Chat request was cancelled.",
+				new InterruptedException("Chat request interrupted."));
+		}
 	}
 }
