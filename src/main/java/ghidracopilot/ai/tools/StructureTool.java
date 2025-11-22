@@ -83,6 +83,7 @@ final class StructureTool {
 		description = """
 			Replace the fields of an existing struct with a new C-style field list.
 			Do not include the 'struct' keyword in field names/identifiers (keep it in the type only if needed).
+			The struct keeps its original name and category path; a mismatched category_path will be rejected to avoid creating a duplicate.
 			Tips: normalize headers (no unknown typedefs/macros; use concrete primitives, uint64_t for pointers/size_t, void * placeholders for function/data pointers); represent self-referencing pointers with fixed-width integers (e.g., uint64_t on x64); avoid recursive/undefined type references; collapse bit-fields into flag bytes; verify offsets in the struct editor after updating.
 			""")
 	ToolResult updateStruct(
@@ -150,12 +151,16 @@ final class StructureTool {
 			return ToolResult.error("Struct not found: " + structName);
 		}
 
-		CategoryPath targetCategory = parseCategoryPath(categoryPathText);
-		if (CategoryPath.ROOT.equals(targetCategory)) {
-			targetCategory = existing.getCategoryPath();
+		CategoryPath existingPath = existing.getCategoryPath();
+		CategoryPath requestedPath = parseCategoryPath(categoryPathText);
+		if (!CategoryPath.ROOT.equals(requestedPath) && !requestedPath.equals(existingPath)) {
+			return ToolResult.error("Struct '" + existing.getName() + "' lives at " + existingPath
+				+ "; update_struct will not move it. Omit category_path or use the existing path.");
 		}
+		CategoryPath targetCategory = existingPath;
+		String replacementName = existing.getName();
 
-		BuildResult build = buildStructure(program, structName, fieldsText, targetCategory);
+		BuildResult build = buildStructure(program, replacementName, fieldsText, targetCategory);
 		if (!build.ok()) {
 			return ToolResult.error(build.error());
 		}
