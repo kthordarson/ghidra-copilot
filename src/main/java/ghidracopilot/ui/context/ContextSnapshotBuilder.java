@@ -354,7 +354,7 @@ public final class ContextSnapshotBuilder {
 				""".trim();
 			case AGENT -> """
 				Interaction mode: Agent (full autonomy).
-				Take initiative to improve clarity: rename functions/variables, apply annotations, and use available tools without asking for confirmation. Prefer focusing on the current function and the functions it directly calls or is called by; read additional functions only when needed for understanding.
+				Err on the side of autonomy: renaming functions/variables, adding comments, and reorganizing for clarity are the goal—do them without seeking confirmation unless you risk altering behavior. When asked to reverse code or mark up a routine, take the lead and apply the edits directly. Prefer focusing on the current function and the functions it directly calls or is called by; read additional functions only when needed for understanding.
 				""".trim();
 		};
 	}

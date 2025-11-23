@@ -56,6 +56,21 @@ task distributeExtension {
     apply from: new File(ghidraInstallDir).getCanonicalPath() + "/support/buildExtension.gradle"
 	dependsOn ':buildExtension'
 }
+
+// Helper to purge stray compiled classes from the installed extension directory inside GHIDRA_INSTALL_DIR.
+def installedExtensionDir = new File(ghidraInstallDir, "Ghidra/Extensions/${project.name}")
+tasks.register('purgeInstalledClasses', Delete) {
+	group = "Ghidra"
+	description = "Delete the installed extension's bin directory to avoid stale class shadowing."
+	delete new File(installedExtensionDir, "bin")
+	// Be lenient if the extension isn't installed.
+	setFollowSymlinks(false)
+}
+
+// Ensure stale installed classes are removed before packaging the extension.
+tasks.named('buildExtension') { extTask ->
+	extTask.dependsOn tasks.named('purgeInstalledClasses')
+}
 //----------------------END "DO NOT MODIFY" SECTION-------------------------------
 
 repositories {
@@ -77,6 +92,8 @@ dependencies {
 	implementation "org.commonmark:commonmark:0.22.0"
 	implementation "org.commonmark:commonmark-ext-gfm-tables:0.22.0"
 	implementation "com.fifesoft:rsyntaxtextarea:3.3.4"
+	// Provides the native OpenSSL binding for Netty so ALPN works without UnsatisfiedLinkError on Windows.
+	runtimeOnly "io.netty:netty-tcnative-boringssl-static:2.0.65.Final"
 
 	testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
 }

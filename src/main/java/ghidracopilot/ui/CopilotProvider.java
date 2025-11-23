@@ -140,16 +140,64 @@ public class CopilotProvider extends ComponentProvider {
 		if (requestInFlight) {
 			return;
 		}
-		stopRequested = false;
 		String prompt = chatInput.getPromptText().trim();
 		if (prompt.isEmpty()) {
 			return;
 		}
 		InteractionMode interactionMode = chatInput.getInteractionMode();
-		chatMessages.addUserMessage(prompt);
 		chatInput.clearPrompt();
+		sendPrompt(prompt, interactionMode);
+	}
 
-		ModelEntry selectedModel = chatInput.getSelectedModel();
+	@Override
+	public JComponent getComponent() {
+		return panel;
+	}
+
+	public void sendPrompt(String promptText, InteractionMode interactionMode) {
+		if (promptText == null) {
+			return;
+		}
+		String prompt = promptText.trim();
+		if (prompt.isEmpty()) {
+			return;
+		}
+		InteractionMode mode = interactionMode != null ? interactionMode : chatInput.getInteractionMode();
+		if (requestInFlight) {
+			SwingUtilities.invokeLater(() -> chatMessages.addSystemMessage(
+				"Finish the active request or stop it before sending another prompt."));
+			return;
+		}
+		SwingUtilities.invokeLater(() -> beginChatRequest(prompt, mode, chatInput.getSelectedModel()));
+	}
+
+	public void sendPrompt(String promptText, InteractionMode interactionMode, String preface) {
+		if (StringUtils.hasText(preface)) {
+			addSystemMessage(preface);
+		}
+		sendPrompt(promptText, interactionMode);
+	}
+
+	public void addSystemMessage(String text) {
+		if (!StringUtils.hasText(text)) {
+			return;
+		}
+		Runnable add = () -> chatMessages.addSystemMessage(text);
+		if (SwingUtilities.isEventDispatchThread()) {
+			add.run();
+		}
+		else {
+			SwingUtilities.invokeLater(add);
+		}
+	}
+
+	private void beginChatRequest(String prompt, InteractionMode interactionMode, ModelEntry selectedModel) {
+		if (requestInFlight) {
+			return;
+		}
+		stopRequested = false;
+		chatMessages.addUserMessage(prompt);
+
 		String providerName = providerName();
 		String providerIdentifier = providerIdentifier();
 		if (selectedModel != null && providerIdentifier != null
@@ -230,11 +278,6 @@ public class CopilotProvider extends ComponentProvider {
 		};
 
 		activeRequest.execute();
-	}
-
-	@Override
-	public JComponent getComponent() {
-		return panel;
 	}
 
 	public void applyConfiguration(Result result) {
