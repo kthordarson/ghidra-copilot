@@ -816,6 +816,8 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 			prompt.append(" The snippet was truncated for brevity; call out if more context would change the answer.");
 		}
 		prompt.append("\n- Summarize behavior in 3-6 bullets for a reverse engineer.\n");
+		prompt.append("\n- Suggest a better name for the function and parameters.\n");
+		prompt.append("\n- Suggest better names and data types for variables.\n");
 		prompt.append("- Highlight side effects, noteworthy calls, and implicit assumptions.\n");
 		prompt.append("```").append(isC ? "c" : "asm").append('\n');
 		prompt.append(code).append('\n').append("```");
