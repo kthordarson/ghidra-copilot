@@ -15,18 +15,32 @@
  */
 package ghidracopilot.ui.messages;
 
-import java.awt.Color;
+import java.awt.BorderLayout;
+import java.awt.Font;
+
+import javax.swing.JLabel;
+import javax.swing.SwingConstants;
+import javax.swing.border.EmptyBorder;
+
+import ghidracopilot.ui.CopilotTheme;
 
 /**
- * Chat bubble rendered for user-authored messages.
+ * User message rendered with a chevron prefix.
  */
 public class UserMessage extends AbstractChatMessage {
 
-	private static final Color BACKGROUND = new Color(0x2B8AE2);
-	private static final Color BORDER = new Color(0x1F5B97);
-	private static final Color TEXT = Color.WHITE;
-
 	public UserMessage(String markdown) {
-		super(markdown, ChatAlignment.RIGHT, BACKGROUND, BORDER, TEXT);
+		super(markdown, CopilotTheme.userText());
+
+		setLayout(new BorderLayout(6, 0));
+
+		JLabel chevron = new JLabel("❯");
+		chevron.setForeground(CopilotTheme.chevronColor());
+		chevron.setFont(chevron.getFont().deriveFont(Font.BOLD));
+		chevron.setVerticalAlignment(SwingConstants.TOP);
+		chevron.setBorder(new EmptyBorder(3, 0, 0, 0));
+
+		add(chevron, BorderLayout.WEST);
+		add(getContentPanel(), BorderLayout.CENTER);
 	}
 }

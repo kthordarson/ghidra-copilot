@@ -15,18 +15,73 @@
  */
 package ghidracopilot.ui.messages;
 
+import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Font;
+
+import javax.swing.JLabel;
+import javax.swing.SwingConstants;
+import javax.swing.border.EmptyBorder;
+
+import ghidracopilot.ui.CopilotTheme;
 
 /**
- * Chat bubble rendered for assistant responses.
+ * Assistant response with a {@code ●} dot prefix and inline content.
+ * Supports incremental streaming via {@link #appendDelta(String)}.
  */
 public class AssistantMessage extends AbstractChatMessage {
 
-	private static final Color BACKGROUND = new Color(0xE5E9F0);
-	private static final Color BORDER = new Color(0xCBD2DC);
-	private static final Color TEXT = new Color(0x1C2333);
+	private final StringBuilder accumulated = new StringBuilder();
 
 	public AssistantMessage(String markdown) {
-		super(markdown, ChatAlignment.LEFT, BACKGROUND, BORDER, TEXT);
+		this(markdown, false);
+	}
+
+	/**
+	 * @param muted if true, renders with muted colors (for thinking/reasoning)
+	 */
+	public AssistantMessage(String markdown, boolean muted) {
+		super(markdown, muted ? CopilotTheme.thinkingText() : CopilotTheme.assistantText());
+
+		setLayout(new BorderLayout(6, 0));
+
+		Color dotColor = muted ? CopilotTheme.thinkingText() : CopilotTheme.copilotDotColor();
+		JLabel dot = new JLabel("\u25CF");
+		dot.setForeground(dotColor);
+		dot.setFont(dot.getFont().deriveFont(muted ? Font.ITALIC : Font.BOLD,
+			dot.getFont().getSize2D() * (muted ? 0.7f : 1f)));
+		dot.setVerticalAlignment(SwingConstants.TOP);
+		dot.setBorder(new EmptyBorder(3, 0, 0, 0));
+
+		add(dot, BorderLayout.WEST);
+		add(getContentPanel(), BorderLayout.CENTER);
+
+		if (markdown != null) {
+			accumulated.append(markdown);
+		}
+
+		if (muted) {
+			MarkdownRenderer.applyFontStyle(getContentComponent(), Font.ITALIC);
+		}
+	}
+
+	/**
+	 * Append a streaming text delta and re-render the markdown content.
+	 *
+	 * @param delta incremental text fragment from the model
+	 */
+	public void appendDelta(String delta) {
+		if (delta == null || delta.isEmpty()) {
+			return;
+		}
+		accumulated.append(delta);
+		setMarkdown(accumulated.toString());
+	}
+
+	/**
+	 * Returns the full accumulated response text.
+	 */
+	public String getAccumulatedText() {
+		return accumulated.toString();
 	}
 }

@@ -64,6 +64,13 @@ public final class SpringAiChatServiceFactory {
 					"Copilot is not configured. Update Tool Options > Ghidra Copilot with your provider credentials.");
 		}
 
+		AiProvider provider = settings.provider() != null ? settings.provider() : AiProvider.OPENAI;
+
+		// GitHub Copilot uses the dedicated Copilot SDK (spawns CLI subprocess)
+		if (provider == AiProvider.GITHUB_COPILOT) {
+			return createCopilotSdk(settings);
+		}
+
 		try {
 		ClientContext context = buildClientContext(settings);
 		ChatService chatService = new SpringAiChatService(
@@ -74,11 +81,33 @@ public final class SpringAiChatServiceFactory {
 			context.azureDeployment(),
 			context.azureModel(),
 			context.systemPrompt());
-			return Result.success(chatService, context.provider().displayName(), context.provider().id());
+			return Result.success(chatService, context.provider().displayName(), context.provider().id(),
+					context.copilotTokenProvider());
 		}
 		catch (IllegalStateException ex) {
 			Msg.warn(SpringAiChatServiceFactory.class, ex.getMessage());
 			return Result.failure(ex.getMessage());
+		}
+	}
+
+	private static Result createCopilotSdk(ChatSettings settings) {
+		try {
+			String modelName = textOrDefault(settings.copilotModel(), "claude-sonnet-4");
+			String systemPrompt = trimToNull(settings.systemPrompt());
+			if (!StringUtils.hasText(systemPrompt)) {
+				systemPrompt = DEFAULT_SYSTEM_PROMPT;
+			}
+
+			CopilotSdkChatService chatService = new CopilotSdkChatService(modelName, systemPrompt);
+			CopilotTokenProvider tokenProvider = new CopilotTokenProvider();
+			return Result.success(chatService, AiProvider.GITHUB_COPILOT.displayName(),
+					AiProvider.GITHUB_COPILOT.id(), tokenProvider);
+		}
+		catch (Exception ex) {
+			String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+			Msg.warn(SpringAiChatServiceFactory.class, "Failed to initialize Copilot SDK: " + msg);
+			return Result.failure(
+				"Failed to initialize GitHub Copilot. Ensure the 'copilot' CLI is installed and in PATH. Error: " + msg);
 		}
 	}
 
@@ -89,6 +118,7 @@ public final class SpringAiChatServiceFactory {
 			case AZURE_OPENAI -> buildAzureOpenAiContext(settings);
 			case ANTHROPIC -> buildAnthropicContext(settings);
 			case OLLAMA -> buildOllamaContext(settings);
+			case GITHUB_COPILOT -> throw new IllegalStateException("Copilot uses dedicated SDK path");
 		};
 
 		String systemPrompt = trimToNull(settings.systemPrompt());
@@ -104,7 +134,8 @@ public final class SpringAiChatServiceFactory {
 		}
 		ChatClient chatClient = builder.build();
 		return new ClientContext(chatClient, modelContext.chatModel(), provider, modelContext.defaultModel(),
-				modelContext.azureDeployment(), modelContext.azureModel(), systemPrompt);
+				modelContext.azureDeployment(), modelContext.azureModel(), systemPrompt,
+				modelContext.copilotTokenProvider());
 	}
 
 	private static ProviderModelContext buildOpenAiContext(ChatSettings settings) {
@@ -228,24 +259,29 @@ public final class SpringAiChatServiceFactory {
 
 		private final String errorMessage;
 
+		private final CopilotTokenProvider copilotTokenProvider;
+
 		private Result(ChatService chatService, String providerDisplayName, String providerId,
-				String errorMessage) {
+				String errorMessage, CopilotTokenProvider copilotTokenProvider) {
 			this.chatService = chatService;
 			this.providerDisplayName = providerDisplayName;
 			this.providerId = providerId;
 			this.errorMessage = errorMessage;
+			this.copilotTokenProvider = copilotTokenProvider;
 		}
 
-		public static Result success(ChatService chatService, String providerDisplayName, String providerId) {
+		public static Result success(ChatService chatService, String providerDisplayName, String providerId,
+				CopilotTokenProvider copilotTokenProvider) {
 			return new Result(
 					Objects.requireNonNull(chatService, "chatService"),
 					Objects.requireNonNull(providerDisplayName, "providerDisplayName"),
 					Objects.requireNonNull(providerId, "providerId"),
-					null);
+					null,
+					copilotTokenProvider);
 		}
 
 		public static Result failure(String errorMessage) {
-			return new Result(null, null, null, Objects.requireNonNull(errorMessage, "errorMessage"));
+			return new Result(null, null, null, Objects.requireNonNull(errorMessage, "errorMessage"), null);
 		}
 
 		public boolean isSuccess() {
@@ -267,13 +303,26 @@ public final class SpringAiChatServiceFactory {
 		public String errorMessage() {
 			return errorMessage;
 		}
+
+		/**
+		 * Returns the Copilot token provider if the selected provider is GitHub Copilot,
+		 * or null otherwise. Use this to fetch the dynamic model catalog.
+		 */
+		public CopilotTokenProvider copilotTokenProvider() {
+			return copilotTokenProvider;
+		}
 	}
 
 	private record ClientContext(ChatClient chatClient, ChatModel chatModel, AiProvider provider, String defaultModel,
-			String azureDeployment, String azureModel, String systemPrompt) {
+			String azureDeployment, String azureModel, String systemPrompt, CopilotTokenProvider copilotTokenProvider) {
 	}
 
 	private record ProviderModelContext(ChatModel chatModel, String defaultModel, String azureDeployment,
-			String azureModel) {
+			String azureModel, CopilotTokenProvider copilotTokenProvider) {
+
+		ProviderModelContext(ChatModel chatModel, String defaultModel, String azureDeployment,
+				String azureModel) {
+			this(chatModel, defaultModel, azureDeployment, azureModel, null);
+		}
 	}
 }

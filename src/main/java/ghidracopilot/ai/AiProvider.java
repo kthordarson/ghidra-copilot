@@ -13,7 +13,9 @@ public enum AiProvider {
 
 	ANTHROPIC("anthropic", "Anthropic"),
 
-	OLLAMA("ollama", "Ollama");
+	OLLAMA("ollama", "Ollama"),
+
+	GITHUB_COPILOT("github-copilot", "GitHub Copilot");
 
 	private final String id;
 
@@ -49,6 +51,7 @@ public enum AiProvider {
 			case "AZURE", "AZURE_OPENAI" -> AZURE_OPENAI;
 			case "ANTHROPIC" -> ANTHROPIC;
 			case "OLLAMA" -> OLLAMA;
+			case "GITHUB_COPILOT", "COPILOT" -> GITHUB_COPILOT;
 			default -> OPENAI;
 		};
 	}

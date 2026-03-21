@@ -35,7 +35,7 @@ import ghidra.util.task.TaskMonitorAdapter;
  * Tools that let the LLM inspect the decompiler output line-by-line and attach comments to the
  * backing instructions.
  */
-final class DecompiledCommentTool {
+final class DecompiledCommentTool implements MutationTool {
 
 	private static final int DECOMPILE_TIMEOUT_SECONDS = 30;
 

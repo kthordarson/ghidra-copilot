@@ -13,7 +13,7 @@ import ghidra.util.exception.InvalidInputException;
 /**
  * Tool to rename a function at a specific address.
  */
-final class RenameFunctionTool {
+final class RenameFunctionTool implements MutationTool {
 
 	private final CopilotToolContext context;
 

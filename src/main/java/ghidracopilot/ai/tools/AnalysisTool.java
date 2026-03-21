@@ -25,7 +25,7 @@ import ghidra.util.task.TaskMonitor;
 /**
  * Tools to kick off Ghidra analysis for the entire program or a specific function.
  */
-final class AnalysisTool {
+final class AnalysisTool implements MutationTool {
 
 	private final CopilotToolContext context;
 
