@@ -21,6 +21,8 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
 import ghidra.util.task.TaskMonitor;
+import ghidracopilot.ai.tools.results.ListItemsResult;
+import ghidracopilot.ai.tools.results.ListItemsResult.Item;
 
 /**
  * Tools to kick off Ghidra analysis for the entire program or a specific function.
@@ -242,7 +244,11 @@ final class AnalysisTool implements MutationTool {
 				return ToolResult.error("No analyzers discovered.");
 			}
 			List<String> names = available.keySet().stream().sorted(String.CASE_INSENSITIVE_ORDER).toList();
-			return ToolResult.success("Available analyzers (" + names.size() + ")", String.join("\n", names));
+			List<Item> items = names.stream().map(name -> new Item(name, name, null)).toList();
+			ListItemsResult result = new ListItemsResult("analyzer", names.size(), false, items);
+			return ToolResult.success("Available analyzers (" + names.size() + ")",
+				result,
+				result.summary());
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Unable to list analyzers: " + ex.getMessage());

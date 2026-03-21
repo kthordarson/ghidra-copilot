@@ -21,7 +21,21 @@ public final class CopilotTheme {
 
 	public static Color background() {
 		Color bg = UIManager.getColor("Panel.background");
-		return bg != null ? bg : new Color(0x1E1E1E);
+		if (bg == null) return new Color(0x1E1E1E);
+		return bg;
+	}
+
+	/** Darker background for the chat transcript area. */
+	public static Color chatBackground() {
+		if (isDark()) {
+			Color bg = background();
+			// Darken the panel background for the chat area
+			return new Color(
+				Math.max(bg.getRed() - 30, 0),
+				Math.max(bg.getGreen() - 30, 0),
+				Math.max(bg.getBlue() - 30, 0));
+		}
+		return new Color(0xFFFFFF);
 	}
 
 	private static boolean isDark() {

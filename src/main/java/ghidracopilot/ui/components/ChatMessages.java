@@ -19,6 +19,8 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -44,17 +46,26 @@ public class ChatMessages extends JPanel {
 
 	public ChatMessages() {
 		super(new BorderLayout());
-		setOpaque(false);
+		setOpaque(true);
+		setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
 		setBorder(new EmptyBorder(0, 10, 0, 10));
 
 		messageList = new MessageListPanel();
 
 		scrollPane = new JScrollPane(messageList);
 		scrollPane.setBorder(null);
-		scrollPane.setOpaque(false);
-		scrollPane.getViewport().setOpaque(false);
+		scrollPane.setOpaque(true);
+		scrollPane.getViewport().setOpaque(true);
+		scrollPane.setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
+		scrollPane.getViewport().setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
 		scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+		scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
+			@Override
+			public void componentResized(ComponentEvent e) {
+				refreshMessageLayouts();
+			}
+		});
 
 		add(scrollPane, BorderLayout.CENTER);
 	}
@@ -73,6 +84,7 @@ public class ChatMessages extends JPanel {
 
 		messageList.revalidate();
 		messageList.repaint();
+		SwingUtilities.invokeLater(this::refreshMessageLayouts);
 
 		if (wasAtBottom) {
 			scrollToBottom();
@@ -83,6 +95,31 @@ public class ChatMessages extends JPanel {
 		messageList.removeAll();
 		messageList.revalidate();
 		messageList.repaint();
+	}
+
+	public void removeMessage(AbstractChatMessage message) {
+		if (message == null) {
+			return;
+		}
+		for (int i = 0; i < messageList.getComponentCount(); i++) {
+			Component child = messageList.getComponent(i);
+			if (!(child instanceof JPanel row)) {
+				continue;
+			}
+			for (Component inner : row.getComponents()) {
+				if (inner != message) {
+					continue;
+				}
+				messageList.remove(i);
+				if (i < messageList.getComponentCount() &&
+					messageList.getComponent(i) instanceof Box.Filler) {
+					messageList.remove(i);
+				}
+				messageList.revalidate();
+				messageList.repaint();
+				return;
+			}
+		}
 	}
 
 	public ghidracopilot.ui.messages.UserMessage addUserMessage(String markdown) {
@@ -121,6 +158,16 @@ public class ChatMessages extends JPanel {
 		ToolCallMessage message = new ToolCallMessage(toolName, inputJson, intentionSummary);
 		appendMessage(message);
 		return message;
+	}
+
+	public ghidracopilot.ui.messages.UndoCheckpointMessage addUndoCheckpoint(
+			int mutationCount, java.util.List<String> mutationDescriptions,
+			ghidra.program.model.listing.Program program) {
+		ghidracopilot.ui.messages.UndoCheckpointMessage checkpoint =
+			new ghidracopilot.ui.messages.UndoCheckpointMessage(
+				mutationCount, mutationDescriptions, program);
+		appendMessage(checkpoint);
+		return checkpoint;
 	}
 
 	/**
@@ -201,6 +248,20 @@ public class ChatMessages extends JPanel {
 		if (isNearBottom()) {
 			scrollToBottom();
 		}
+	}
+
+	private void refreshMessageLayouts() {
+		for (Component rowComponent : messageList.getComponents()) {
+			if (rowComponent instanceof JPanel row) {
+				for (Component child : row.getComponents()) {
+					if (child instanceof AbstractChatMessage message) {
+						message.refreshLayout();
+					}
+				}
+			}
+		}
+		messageList.revalidate();
+		messageList.repaint();
 	}
 
 	private static class MessageListPanel extends JPanel implements Scrollable {

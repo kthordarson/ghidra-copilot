@@ -19,6 +19,8 @@ import ghidra.program.model.symbol.Symbol;
 import ghidra.program.model.symbol.SymbolIterator;
 import ghidra.program.model.symbol.SymbolTable;
 import ghidra.program.model.symbol.SymbolType;
+import ghidracopilot.ai.tools.results.ListItemsResult;
+import ghidracopilot.ai.tools.results.ListItemsResult.Item;
 
 /**
  * Tools for enumerating strings and functions within the current program.
@@ -113,9 +115,9 @@ final class SymbolSearchTool {
 		String filter = hasFilter ? contains.toLowerCase(Locale.ROOT) : null;
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 
-		List<String> rows = new ArrayList<>();
+		List<Item> items = new ArrayList<>();
 		try {
-			while (iterator.hasNext() && rows.size() < limit) {
+			while (iterator.hasNext() && items.size() < limit) {
 				Data data = iterator.next();
 				if (data == null || !StringDataInstance.isString(data)) {
 					continue;
@@ -131,18 +133,21 @@ final class SymbolSearchTool {
 				if (hasFilter && !value.toLowerCase(Locale.ROOT).contains(filter)) {
 					continue;
 				}
-				rows.add(
-					context.formatAddress(instance.getAddress()) + " : \"" + sanitize(value) + "\"");
+				items.add(new Item("\"" + sanitize(value) + "\"",
+					value,
+					context.formatAddress(instance.getAddress())));
 			}
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to enumerate strings: " + ex.getMessage());
 		}
 
-		if (rows.isEmpty()) {
-			return ToolResult.success("No matching strings found.");
+		if (items.isEmpty()) {
+			ListItemsResult result = emptyListResult("string");
+			return ToolResult.success("No matching strings found.", result, result.summary());
 		}
-		return ToolResult.success("Found " + rows.size() + " strings.", String.join("\n", rows));
+		ListItemsResult result = new ListItemsResult("string", items.size(), false, items);
+		return ToolResult.success("Found " + items.size() + " strings.", result, result.summary());
 	}
 
 	private ToolResult doListFunctions(Program program, String nameContains, Integer maxResults) {
@@ -155,32 +160,33 @@ final class SymbolSearchTool {
 		String filter = hasFilter ? nameContains.toLowerCase(Locale.ROOT) : null;
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 
-		List<String> rows = new ArrayList<>();
+		List<Item> items = new ArrayList<>();
 		try {
-			while (iterator.hasNext() && rows.size() < limit) {
+			while (iterator.hasNext() && items.size() < limit) {
 				Function function = iterator.next();
 				String name = function.getName();
 				if (hasFilter && (name == null || !name.toLowerCase(Locale.ROOT).contains(filter))) {
 					continue;
 				}
-				StringBuilder row = new StringBuilder();
-				row.append(context.formatAddress(function.getEntryPoint()))
-					.append(" : ")
-					.append(name != null ? name : "<unnamed>");
+				StringBuilder display = new StringBuilder(name != null ? name : "<unnamed>");
 				if (function.isExternal()) {
-					row.append(" [external]");
+					display.append(" [external]");
 				}
-				rows.add(row.toString());
+				items.add(new Item(display.toString(),
+					name != null ? name : "<unnamed>",
+					context.formatAddress(function.getEntryPoint())));
 			}
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to enumerate functions: " + ex.getMessage());
 		}
 
-		if (rows.isEmpty()) {
-			return ToolResult.success("No matching functions found.");
+		if (items.isEmpty()) {
+			ListItemsResult result = emptyListResult("function");
+			return ToolResult.success("No matching functions found.", result, result.summary());
 		}
-		return ToolResult.success("Found " + rows.size() + " functions.", String.join("\n", rows));
+		ListItemsResult result = new ListItemsResult("function", items.size(), false, items);
+		return ToolResult.success("Found " + items.size() + " functions.", result, result.summary());
 	}
 
 	private ToolResult doListImports(Program program, String nameContains, Integer maxResults) {
@@ -194,9 +200,9 @@ final class SymbolSearchTool {
 		String filter = hasFilter ? nameContains.toLowerCase(Locale.ROOT) : null;
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 
-		List<String> rows = new ArrayList<>();
+		List<Item> items = new ArrayList<>();
 		try {
-			while (iterator.hasNext() && rows.size() < limit) {
+			while (iterator.hasNext() && items.size() < limit) {
 				Symbol symbol = iterator.next();
 				if (symbol == null || symbol.getName() == null) {
 					continue;
@@ -205,17 +211,19 @@ final class SymbolSearchTool {
 				if (hasFilter && !name.toLowerCase(Locale.ROOT).contains(filter)) {
 					continue;
 				}
-				rows.add(name);
+				items.add(new Item(name, name, null));
 			}
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to enumerate imports: " + ex.getMessage());
 		}
 
-		if (rows.isEmpty()) {
-			return ToolResult.success("No matching imports found.");
+		if (items.isEmpty()) {
+			ListItemsResult result = emptyListResult("import");
+			return ToolResult.success("No matching imports found.", result, result.summary());
 		}
-		return ToolResult.success("Found " + rows.size() + " imports.", String.join("\n", rows));
+		ListItemsResult result = new ListItemsResult("import", items.size(), false, items);
+		return ToolResult.success("Found " + items.size() + " imports.", result, result.summary());
 	}
 
 	private ToolResult doListExports(Program program, String nameContains, Integer maxResults) {
@@ -229,9 +237,9 @@ final class SymbolSearchTool {
 		String filter = hasFilter ? nameContains.toLowerCase(Locale.ROOT) : null;
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 
-		List<String> rows = new ArrayList<>();
+		List<Item> items = new ArrayList<>();
 		try {
-			while (iterator.hasNext() && rows.size() < limit) {
+			while (iterator.hasNext() && items.size() < limit) {
 				Address address = iterator.next();
 				Symbol symbol = symbolTable.getPrimarySymbol(address);
 				String name = symbol != null ? symbol.getName(true) : null;
@@ -239,17 +247,19 @@ final class SymbolSearchTool {
 					continue;
 				}
 				String displayName = name != null ? name : "<unnamed>";
-				rows.add(context.formatAddress(address) + " : " + displayName);
+				items.add(new Item(displayName, displayName, context.formatAddress(address)));
 			}
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to enumerate exports: " + ex.getMessage());
 		}
 
-		if (rows.isEmpty()) {
-			return ToolResult.success("No matching exports found.");
+		if (items.isEmpty()) {
+			ListItemsResult result = emptyListResult("export");
+			return ToolResult.success("No matching exports found.", result, result.summary());
 		}
-		return ToolResult.success("Found " + rows.size() + " exports.", String.join("\n", rows));
+		ListItemsResult result = new ListItemsResult("export", items.size(), false, items);
+		return ToolResult.success("Found " + items.size() + " exports.", result, result.summary());
 	}
 
 	private ToolResult doListSymbols(Program program, String nameContains, Integer maxResults, SymbolType type) {
@@ -263,9 +273,9 @@ final class SymbolSearchTool {
 		String filter = hasFilter ? nameContains.toLowerCase(Locale.ROOT) : null;
 		int limit = context.normalizeLimit(maxResults, DEFAULT_LIMIT, MAX_LIMIT);
 
-		List<String> rows = new ArrayList<>();
+		List<Item> items = new ArrayList<>();
 		try {
-			while (iterator.hasNext() && rows.size() < limit) {
+			while (iterator.hasNext() && items.size() < limit) {
 				Symbol symbol = iterator.next();
 				if (symbol == null || symbol.getSymbolType() != type) {
 					continue;
@@ -277,7 +287,9 @@ final class SymbolSearchTool {
 				if (type == SymbolType.LABEL && symbol.isExternal()) {
 					continue;
 				}
-				rows.add(formatSymbol(symbol));
+				items.add(new Item(symbol.getName(true),
+					symbol.getName(true),
+					symbol.getAddress() != null ? context.formatAddress(symbol.getAddress()) : null));
 			}
 		}
 		catch (Exception ex) {
@@ -285,21 +297,19 @@ final class SymbolSearchTool {
 		}
 
 		String typeLabel = typeLabel(type);
-		if (rows.isEmpty()) {
-			return ToolResult.success("No matching " + typeLabel + "s found.");
+		if (items.isEmpty()) {
+			ListItemsResult result = emptyListResult(typeLabel);
+			return ToolResult.success("No matching " + typeLabel + "s found.", result, result.summary());
 		}
+		ListItemsResult result = new ListItemsResult(typeLabel, items.size(), false, items);
 		return ToolResult.success(
-			"Found " + rows.size() + " " + typeLabel + "s.",
-			String.join("\n", rows));
+			"Found " + items.size() + " " + typeLabel + "s.",
+			result,
+			result.summary());
 	}
 
-	private String formatSymbol(Symbol symbol) {
-		String name = symbol.getName(true);
-		Address address = symbol.getAddress();
-		if (address != null) {
-			return context.formatAddress(address) + " : " + name;
-		}
-		return name;
+	private static ListItemsResult emptyListResult(String kind) {
+		return new ListItemsResult(kind, 0, false, List.of());
 	}
 
 	private String typeLabel(SymbolType type) {

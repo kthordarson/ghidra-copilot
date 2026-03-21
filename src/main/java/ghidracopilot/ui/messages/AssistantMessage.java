@@ -48,8 +48,7 @@ public class AssistantMessage extends AbstractChatMessage {
 		Color dotColor = muted ? CopilotTheme.thinkingText() : CopilotTheme.copilotDotColor();
 		JLabel dot = new JLabel("\u25CF");
 		dot.setForeground(dotColor);
-		dot.setFont(dot.getFont().deriveFont(muted ? Font.ITALIC : Font.BOLD,
-			dot.getFont().getSize2D() * (muted ? 0.7f : 1f)));
+		dot.setFont(dot.getFont().deriveFont(Font.BOLD, dot.getFont().getSize2D()));
 		dot.setVerticalAlignment(SwingConstants.TOP);
 		dot.setBorder(new EmptyBorder(3, 0, 0, 0));
 

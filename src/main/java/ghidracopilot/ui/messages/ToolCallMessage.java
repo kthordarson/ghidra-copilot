@@ -23,7 +23,11 @@ import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.swing.BorderFactory;
 import javax.swing.BoxLayout;
@@ -31,11 +35,13 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
+import javax.swing.SwingConstants;
 import javax.swing.border.EmptyBorder;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import ghidracopilot.ai.tools.results.ListItemsResult;
 import ghidracopilot.ui.CopilotTheme;
 
 /**
@@ -60,6 +66,13 @@ public class ToolCallMessage extends AbstractChatMessage {
 	private static final String CIRCLE_EMPTY = "\u25CB";  // ○
 	private static final String CROSS = "\u2717";         // ✗
 	private static final String CHILD_LAST = "\u2514";    // └
+	private static final Pattern FOUND_COUNT_PATTERN =
+		Pattern.compile("^Found\\s+(\\d+)\\s+([A-Za-z]+)\\.?$");
+	private static final Pattern NO_MATCHING_PATTERN =
+		Pattern.compile("^No matching\\s+([A-Za-z]+)s?\\s+found\\.?$");
+	private static final Pattern AVAILABLE_COUNT_PATTERN =
+		Pattern.compile("^Available\\s+([A-Za-z]+)s\\s+\\((\\d+)\\)$");
+	private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
 
 	/** Human-readable display names for built-in tools (sentence case). */
 	private static final Map<String, String> DISPLAY_NAMES = Map.ofEntries(
@@ -142,6 +155,10 @@ public class ToolCallMessage extends AbstractChatMessage {
 		this.state = ToolCallState.INVOKED;
 		this.expanded = false;
 
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] CREATED"
+			+ ", args=" + (inputJson != null ? inputJson.length() + " chars" : "null")
+			+ ", argsPreview=" + truncateForLog(inputJson, 100));
+
 		Color text = CopilotTheme.toolText();
 		Color muted = CopilotTheme.systemText();
 		Color detailBg = CopilotTheme.toolDetailBackground();
@@ -168,16 +185,20 @@ public class ToolCallMessage extends AbstractChatMessage {
 		intentLabel.setForeground(muted);
 		header.add(intentLabel);
 
-		header.addMouseListener(new MouseAdapter() {
+		MouseAdapter headerClick = new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
 				if (hasExpandableContent()) toggleExpanded();
 			}
-		});
+		};
+		header.addMouseListener(headerClick);
+		iconLabel.addMouseListener(headerClick);
+		displayNameLabel.addMouseListener(headerClick);
+		intentLabel.addMouseListener(headerClick);
 		add(header);
 
 		// --- Callout line: └ result summary ---
-		calloutLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		calloutLine = new JPanel(new BorderLayout());
 		calloutLine.setOpaque(false);
 		calloutLine.setAlignmentX(Component.LEFT_ALIGNMENT);
 		calloutLine.setBorder(new EmptyBorder(0, 2, 0, 0));
@@ -185,21 +206,25 @@ public class ToolCallMessage extends AbstractChatMessage {
 		calloutIconLabel = new JLabel("  " + CHILD_LAST + " ");
 		calloutIconLabel.setForeground(muted);
 		calloutIconLabel.setFont(calloutIconLabel.getFont().deriveFont(Font.PLAIN));
-		calloutLine.add(calloutIconLabel);
+		calloutLine.add(calloutIconLabel, BorderLayout.WEST);
 
 		calloutTextLabel = new JLabel();
 		calloutTextLabel.setForeground(muted);
 		calloutTextLabel.setFont(calloutTextLabel.getFont().deriveFont(Font.PLAIN,
 			calloutTextLabel.getFont().getSize2D() - 1f));
-		calloutLine.add(calloutTextLabel);
+		calloutTextLabel.setVerticalAlignment(SwingConstants.TOP);
+		calloutLine.add(calloutTextLabel, BorderLayout.CENTER);
 
 		calloutLine.setVisible(false);
-		calloutLine.addMouseListener(new MouseAdapter() {
+		MouseAdapter calloutClick = new MouseAdapter() {
 			@Override
 			public void mouseClicked(MouseEvent e) {
 				if (hasExpandableContent()) toggleExpanded();
 			}
-		});
+		};
+		calloutLine.addMouseListener(calloutClick);
+		calloutIconLabel.addMouseListener(calloutClick);
+		calloutTextLabel.addMouseListener(calloutClick);
 		add(calloutLine);
 
 		// --- Expandable detail area (collapsed by default) ---
@@ -255,6 +280,11 @@ public class ToolCallMessage extends AbstractChatMessage {
 		if (newState == null) {
 			return;
 		}
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setState: "
+			+ state + " → " + newState
+			+ ", hasOutput=" + (!outputJson.isEmpty())
+			+ ", hasError=" + (!errorMessage.isEmpty())
+			+ ", expandable=" + hasExpandableContent());
 		this.state = newState;
 		updateDisplay();
 	}
@@ -266,6 +296,9 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 	public void setOutputJson(String outputJson) {
 		this.outputJson = outputJson != null ? outputJson : "";
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setOutputJson called, "
+			+ "length=" + this.outputJson.length()
+			+ ", preview=" + truncate(this.outputJson, 120));
 		updateDetailArea();
 		updateCallout();
 		updateExpandability();
@@ -273,6 +306,8 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 	public void setErrorMessage(String errorMessage) {
 		this.errorMessage = errorMessage != null ? errorMessage : "";
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setErrorMessage called, "
+			+ "length=" + this.errorMessage.length());
 		updateDisplay();
 		updateExpandability();
 	}
@@ -287,7 +322,12 @@ public class ToolCallMessage extends AbstractChatMessage {
 			? Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
 			: Cursor.getDefaultCursor();
 		header.setCursor(cursor);
+		iconLabel.setCursor(cursor);
+		displayNameLabel.setCursor(cursor);
+		intentLabel.setCursor(cursor);
 		calloutLine.setCursor(cursor);
+		calloutIconLabel.setCursor(cursor);
+		calloutTextLabel.setCursor(cursor);
 	}
 
 	private void toggleExpanded() {
@@ -360,11 +400,12 @@ public class ToolCallMessage extends AbstractChatMessage {
 	}
 
 	private void updateCallout() {
+		boolean wasVisible = calloutLine.isVisible();
 		if (expanded) {
+			calloutTextLabel.setText("");
 			calloutLine.setVisible(false);
-			return;
 		}
-		if (state == ToolCallState.FAILED && !errorMessage.isEmpty()) {
+		else if (state == ToolCallState.FAILED && !errorMessage.isEmpty()) {
 			String truncated = errorMessage.length() > 80
 				? errorMessage.substring(0, 77) + "..."
 				: errorMessage;
@@ -375,17 +416,35 @@ public class ToolCallMessage extends AbstractChatMessage {
 		}
 		else if (state == ToolCallState.COMPLETED && !outputJson.isEmpty()) {
 			String summary = buildResultSummary();
+			ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: "
+				+ "state=" + state + ", outputLen=" + outputJson.length()
+				+ ", summary=" + (summary != null ? "'" + summary + "'" : "null"));
 			if (summary != null && !summary.isEmpty()) {
 				calloutTextLabel.setText(summary);
 				calloutTextLabel.setForeground(CopilotTheme.systemText());
 				calloutIconLabel.setForeground(CopilotTheme.systemText());
 				calloutLine.setVisible(true);
 			} else {
+				calloutTextLabel.setText("");
 				calloutLine.setVisible(false);
 			}
 		}
 		else {
+			ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: "
+				+ "state=" + state + ", outputLen=" + outputJson.length()
+				+ ", errorLen=" + errorMessage.length() + " → hidden");
+			calloutTextLabel.setText("");
 			calloutLine.setVisible(false);
+		}
+
+		// Force layout refresh when visibility changes
+		if (calloutLine.isVisible() != wasVisible) {
+			revalidateUpTree();
+		}
+		else {
+			calloutLine.revalidate();
+			calloutLine.repaint();
+			revalidateUpTree();
 		}
 	}
 
@@ -480,29 +539,29 @@ public class ToolCallMessage extends AbstractChatMessage {
 				"describe_basic_block", "references_to_address",
 				"references_from_address", "data_references_from_address",
 				"list_stack_variables", "reanalyze_function" ->
-				paren(arg("addressText"));
+				paren(addr(arg("addressText")));
 
 			case "show_data_at_address" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				yield a != null ? "(" + a + ")" : null;
 			}
 
 			case "read_bytes" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String len = arg("length");
 				if (a == null) yield null;
 				yield len != null ? "(" + a + ") " + len + " bytes" : "(" + a + ")";
 			}
 
 			case "list_disassembly" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String cnt = arg("maxInstructions");
 				if (a == null) yield null;
 				yield cnt != null ? "(" + a + ") " + cnt + " insns" : "(" + a + ")";
 			}
 
 			case "list_decompiled_lines" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String start = arg("startLine");
 				String end = arg("endLine");
 				if (a == null) yield null;
@@ -514,7 +573,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 			// ── Rename / retype ──────────────────────────────────────────
 			case "rename_function" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String name = arg("newName");
 				if (a != null && name != null) yield "(" + a + ") → " + name;
 				if (name != null) yield "→ " + name;
@@ -526,18 +585,18 @@ public class ToolCallMessage extends AbstractChatMessage {
 				String nw = arg("newName");
 				if (cur != null && nw != null) yield cur + " → " + nw;
 				if (nw != null) yield "→ " + nw;
-				yield paren(arg("addressText"));
+				yield paren(addr(arg("addressText")));
 			}
 
 			case "retype_function" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String sig = arg("signatureText");
 				if (sig != null) yield truncate(sig, 60);
 				yield paren(a);
 			}
 
 			case "rename_label" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String name = arg("newName");
 				if (a != null && name != null) yield "(" + a + ") → " + name;
 				yield paren(a);
@@ -559,28 +618,28 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 			// ── Comments / annotation ────────────────────────────────────
 			case "set_comment" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String type = arg("commentType");
 				if (a != null && type != null) yield type + " (" + a + ")";
 				yield paren(a);
 			}
 
 			case "describe_decompiled_line" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String line = arg("lineNumber");
 				if (a != null && line != null) yield "(" + a + ") line " + line;
 				yield paren(a);
 			}
 
 			case "comment_decompiled_line" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String line = arg("lineNumber");
 				if (a != null && line != null) yield "(" + a + ") line " + line;
 				yield paren(a);
 			}
 
 			case "flag_address" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String cat = arg("category");
 				if (a != null && cat != null) yield cat + " (" + a + ")";
 				yield paren(a);
@@ -597,7 +656,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 			case "apply_struct_to_address" -> {
 				String s = arg("structName");
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				if (s != null && a != null) yield s + " (" + a + ")";
 				yield s != null ? paren(s) : paren(a);
 			}
@@ -611,17 +670,17 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 			// ── Patch ────────────────────────────────────────────────────
 			case "patch_bytes" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String hex = arg("hexBytes");
 				if (a != null && hex != null) yield "(" + a + ") " + truncate(hex, 24);
 				yield paren(a);
 			}
 
-			case "fill_pattern" -> paren(arg("addressText"));
+			case "fill_pattern" -> paren(addr(arg("addressText")));
 
 			// ── Call graph ───────────────────────────────────────────────
 			case "describe_call_graph" -> {
-				String a = arg("addressText");
+				String a = addr(arg("addressText"));
 				String depth = arg("maxCallees");
 				if (a != null && depth != null) yield "(" + a + ") depth " + depth;
 				yield paren(a);
@@ -650,25 +709,207 @@ public class ToolCallMessage extends AbstractChatMessage {
 	// ── Result summary (callout line) ────────────────────────────────────
 
 	/** Concise result summary that avoids repeating header info. */
-	private String buildResultSummary() {
-		if (outputJson == null || outputJson.isEmpty()) return null;
-		String text = outputJson.trim();
+	String buildResultSummary() {
+		if (outputJson == null || outputJson.isBlank()) return null;
+		String text = outputJson.strip();
+		String custom = buildToolSpecificResultSummary(text);
+		if (custom != null) return custom;
+		String envelopeSummary = buildEnvelopeMessageSummary(text);
+		if (envelopeSummary != null) return envelopeSummary;
 
-		int lineCount = 1;
-		for (int i = 0; i < text.length(); i++) {
-			if (text.charAt(i) == '\n') lineCount++;
+		String[] lines = text.split("\\R");
+		int lineCount = lines.length;
+		String firstNonBlankLine = null;
+		for (String line : lines) {
+			String trimmed = line.trim();
+			if (!trimmed.isEmpty()) {
+				firstNonBlankLine = trimmed;
+				break;
+			}
 		}
 
 		// Multi-line: just the count
 		if (lineCount > 2) return lineCount + " lines";
 
-		// Single/two-line: show first line, skip if it just echoes the header
-		String firstLine = text.contains("\n")
-			? text.substring(0, text.indexOf('\n')).trim() : text;
-		if (firstLine.length() > 80) {
-			firstLine = firstLine.substring(0, 77) + "...";
+		// Single/two-line: show the first non-blank line if present.
+		if (firstNonBlankLine == null) {
+			return "Completed";
 		}
-		return firstLine;
+		if (firstNonBlankLine.length() > 80) {
+			firstNonBlankLine = firstNonBlankLine.substring(0, 77) + "...";
+		}
+		return firstNonBlankLine;
+	}
+
+	private String buildToolSpecificResultSummary(String text) {
+		return switch (toolName) {
+			case "list_functions", "list_imports", "list_exports", "list_labels",
+				"list_namespaces", "list_classes", "list_strings", "list_analyzers" ->
+				buildListResultSummary(text);
+			default -> null;
+		};
+	}
+
+	private String buildListResultSummary(String text) {
+		String structured = buildStructuredListResultSummary(text);
+		if (structured != null) {
+			return structured;
+		}
+
+		String[] lines = text.split("\\R");
+		String header = firstNonBlankLine(lines);
+		if (header == null) {
+			return null;
+		}
+
+		Matcher noMatch = NO_MATCHING_PATTERN.matcher(header);
+		if (noMatch.matches()) {
+			String singular = singularize(noMatch.group(1));
+			return "No " + singular + "s";
+		}
+
+		Matcher found = FOUND_COUNT_PATTERN.matcher(header);
+		Matcher available = AVAILABLE_COUNT_PATTERN.matcher(header);
+		if (!found.matches()) {
+			if (available.matches()) {
+				int count = Integer.parseInt(available.group(2));
+				String singularType = singularize(available.group(1));
+				return summarizeListItems(count, singularType, extractListItems(lines), false);
+			}
+			return null;
+		}
+
+		int count = Integer.parseInt(found.group(1));
+		String pluralType = found.group(2).toLowerCase();
+		return summarizeListItems(count, singularize(pluralType), extractListItems(lines), false);
+	}
+
+	private List<String> extractListItems(String[] lines) {
+		List<String> items = new ArrayList<>();
+		for (int i = 1; i < lines.length; i++) {
+			String line = lines[i].trim();
+			if (line.isEmpty()) {
+				continue;
+			}
+			String item = extractListItem(line);
+			if (item != null && !item.isBlank()) {
+				items.add(item);
+			}
+		}
+		return items;
+	}
+
+	private String extractListItem(String line) {
+		return switch (toolName) {
+			case "list_functions", "list_exports", "list_labels",
+				"list_namespaces", "list_classes" -> {
+				int sep = line.indexOf(" : ");
+				yield sep >= 0 ? line.substring(sep + 3).trim() : line;
+			}
+			case "list_strings" -> {
+				int sep = line.indexOf(" : ");
+				yield sep >= 0 ? line.substring(sep + 3).trim() : line;
+			}
+			case "list_imports", "list_analyzers" -> line;
+			default -> line;
+		};
+	}
+
+	private String buildStructuredListResultSummary(String text) {
+		JsonNode dataNode = extractStructuredDataNode(text);
+		if (dataNode == null || !dataNode.isObject()) {
+			return null;
+		}
+		try {
+			ListItemsResult result = JSON_MAPPER.treeToValue(dataNode, ListItemsResult.class);
+			return result.summary();
+		}
+		catch (Exception ignored) {
+			return null;
+		}
+	}
+
+	private String buildEnvelopeMessageSummary(String text) {
+		ghidracopilot.ai.tools.ToolResult result = ghidracopilot.ai.tools.ToolResult.tryParse(text);
+		if (result == null) {
+			return null;
+		}
+		String summary = result.toolSummary();
+		if (summary != null && !summary.isBlank()) {
+			return truncate(summary, 96);
+		}
+		if (!result.success()) {
+			String error = result.errorMessage();
+			return (error == null || error.isBlank()) ? "Failed" : truncate(error, 96);
+		}
+		String message = result.message();
+		return (message == null || message.isBlank()) ? "Completed" : truncate(message, 96);
+	}
+
+	private JsonNode extractStructuredDataNode(String text) {
+		JsonNode root = extractToolResultEnvelope(text);
+		return root != null ? root.get("data") : null;
+	}
+
+	private JsonNode extractToolResultEnvelope(String text) {
+		if (text == null || text.isBlank() || text.charAt(0) != '{') {
+			return null;
+		}
+		try {
+			JsonNode root = JSON_MAPPER.readTree(text);
+			if (!root.isObject() || !root.has("success") || !root.has("message")) {
+				return null;
+			}
+			return root;
+		}
+		catch (Exception ignored) {
+			return null;
+		}
+	}
+
+	private String summarizeListItems(int count, String singularType, List<String> items, boolean truncatedItems) {
+		String typeLabel = count == 1 ? singularize(singularType) : pluralize(singularType);
+		if (count == 0 || items.isEmpty()) {
+			return count == 0 ? "No " + pluralize(singularType) : count + " " + typeLabel;
+		}
+
+		int shown = Math.min(items.size(), 2);
+		String joined = String.join(", ", items.subList(0, shown));
+		if (count > shown || truncatedItems) {
+			joined += ", ...";
+		}
+		return truncate(count + " " + typeLabel + ": " + joined, 96);
+	}
+
+	private static String firstNonBlankLine(String[] lines) {
+		for (String line : lines) {
+			String trimmed = line.trim();
+			if (!trimmed.isEmpty()) {
+				return trimmed;
+			}
+		}
+		return null;
+	}
+
+	private static String singularize(String plural) {
+		if (plural == null || plural.isBlank()) {
+			return "item";
+		}
+		String word = plural.toLowerCase();
+		if (word.endsWith("sses")) return word.substring(0, word.length() - 2);
+		if (word.endsWith("ies") && word.length() > 3) return word.substring(0, word.length() - 3) + "y";
+		if (word.endsWith("s") && word.length() > 1) return word.substring(0, word.length() - 1);
+		return word;
+	}
+
+	private static String pluralize(String singular) {
+		if (singular == null || singular.isBlank()) {
+			return "items";
+		}
+		String word = singularize(singular);
+		if (word.endsWith("y") && word.length() > 1) return word.substring(0, word.length() - 1) + "ies";
+		if (word.endsWith("s")) return word + "es";
+		return word + "s";
 	}
 
 	// ── Helpers ──────────────────────────────────────────────────────────
@@ -677,9 +918,25 @@ public class ToolCallMessage extends AbstractChatMessage {
 		return value != null && !value.isBlank() ? "(" + value + ")" : null;
 	}
 
+	/** Ensures a hex address has a 0x prefix for display. */
+	private static String addr(String value) {
+		if (value == null || value.isBlank()) return null;
+		String v = value.trim();
+		if (v.startsWith("0x") || v.startsWith("0X")) return v;
+		// Only prefix if it looks like hex (all hex chars)
+		if (v.matches("[0-9a-fA-F]+")) return "0x" + v;
+		return v;
+	}
+
 	private static String truncate(String value, int maxLen) {
 		if (value == null) return null;
 		return value.length() > maxLen ? value.substring(0, maxLen - 3) + "..." : value;
+	}
+
+	private static String truncateForLog(String value, int maxLen) {
+		if (value == null) return "null";
+		if (value.length() <= maxLen) return "'" + value + "'";
+		return "'" + value.substring(0, maxLen - 3) + "...'";
 	}
 
 	private void updateDetailArea() {
@@ -690,9 +947,10 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 		if (!outputJson.isEmpty()) {
 			sb.append("\n\nOutput:\n");
-			String truncated = outputJson.length() > 4000
-				? outputJson.substring(0, 4000) + "\n... (truncated)"
-				: outputJson;
+			String formatted = formatOutputForDetail(outputJson);
+			String truncated = formatted.length() > 4000
+				? formatted.substring(0, 4000) + "\n... (truncated)"
+				: formatted;
 			sb.append(truncated);
 		}
 
@@ -702,6 +960,24 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 		detailArea.setText(sb.toString());
 		detailArea.setCaretPosition(0);
+	}
+
+	private String formatOutputForDetail(String value) {
+		if (value == null || value.isBlank()) {
+			return "";
+		}
+		try {
+			JsonNode node = JSON_MAPPER.readTree(value);
+			return JSON_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+		}
+		catch (Exception ignored) {
+			return value;
+		}
+	}
+
+	/** Returns the human-readable display name for a tool. */
+	public static String displayNameFor(String toolName) {
+		return DISPLAY_NAMES.getOrDefault(toolName, prettifyToolName(toolName));
 	}
 
 	/** Convert snake_case tool name to sentence case display name. */

@@ -31,6 +31,7 @@ import org.springframework.util.StringUtils;
 import ghidracopilot.ai.tools.CopilotToolRegistry;
 import ghidracopilot.ai.tools.IntentionSummariser;
 import ghidracopilot.ai.tools.MutationTool;
+import ghidracopilot.ai.tools.ToolResult;
 
 /**
  * {@link ChatService} implementation backed by a Spring AI {@link ChatModel}.
@@ -233,7 +234,7 @@ public class SpringAiChatService implements ChatService {
 				errorResponses.add(new ToolResponseMessage.ToolResponse(
 					call.id(),
 					call.name(),
-					"ERROR: " + errorMsg));
+					ToolResult.error(errorMsg).toJson()));
 			}
 			recoveryHistory.add(new ToolResponseMessage(errorResponses));
 
@@ -263,7 +264,7 @@ public class SpringAiChatService implements ChatService {
 				if (!pm.checkPermission(call.name(), desc)) {
 					deniedResponses.add(new ToolResponseMessage.ToolResponse(
 						call.id(), call.name(),
-						"Permission denied by user for " + call.name()));
+						ToolResult.error("Permission denied by user for " + call.name()).toJson()));
 					anyDenied = true;
 				}
 			}
@@ -526,14 +527,21 @@ public class SpringAiChatService implements ChatService {
 		for (AssistantMessage.ToolCall call : assistantMessage.getToolCalls()) {
 			ToolResponseMessage.ToolResponse response = responsesById.get(call.id());
 			String output = response != null ? response.responseData() : null;
+			ToolResult parsed = ToolResult.tryParse(output);
+			ToolCallUpdate.State state = ToolCallUpdate.State.COMPLETED;
+			String errorMessage = null;
+			if (parsed != null && !parsed.success()) {
+				state = ToolCallUpdate.State.FAILED;
+				errorMessage = parsed.errorMessage();
+			}
 			request.toolCallObserver()
 					.onToolCallUpdate(new ToolCallUpdate(
 						call.id(),
 						call.name(),
 						normalizeJson(call.arguments()),
 						output,
-						ToolCallUpdate.State.COMPLETED,
-						null,
+						state,
+						errorMessage,
 						summariseIntention(call.name(), call.arguments())));
 		}
 	}

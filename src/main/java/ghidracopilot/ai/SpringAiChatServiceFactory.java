@@ -1,5 +1,6 @@
 package ghidracopilot.ai;
 
+import java.util.Locale;
 import java.util.Objects;
 
 import com.azure.ai.openai.OpenAIClientBuilder;
@@ -30,7 +31,7 @@ import ghidracopilot.ai.tools.CopilotToolRegistry;
  */
 public final class SpringAiChatServiceFactory {
 
-	public static final String DEFAULT_SYSTEM_PROMPT = """
+	private static final String BASE_SYSTEM_PROMPT = """
 			You are Ghidra Copilot, an assistant that helps with reverse engineering tasks inside Ghidra. \
 			Provide concise, technically accurate guidance and clearly call out any assumptions you make. \
 			Act on implied intent: rename symbols, add or update comments, and refactor for readability when it supports \
@@ -40,6 +41,25 @@ public final class SpringAiChatServiceFactory {
 			Only change the user's Ghidra UI state (including cursor positioning or navigation tools) when they explicitly ask \
 			or when it is essential to avoid confusion."""
 			.strip();
+
+	private static final String INTENT_SYSTEM_PROMPT = """
+			IMPORTANT: Always call report_intent to keep the user informed about what you are doing. \
+			Call it before starting any task, and update it whenever your focus changes. \
+			Use short gerund-form phrases like "Decompiling function", "Analyzing call graph", "Renaming variables". \
+			Call report_intent alongside your other tool calls, not in isolation."""
+			.strip();
+
+	private static final String COPILOT_INTENT_SYSTEM_PROMPT = """
+			IMPORTANT: Keep the user informed about what you are doing by updating your current intent/status. \
+			Set an intent before starting a task, and update it whenever your focus changes. \
+			Use short gerund-form phrases like "Decompiling function", "Analyzing call graph", "Renaming variables"."""
+			.strip();
+
+	public static final String DEFAULT_SYSTEM_PROMPT =
+		(BASE_SYSTEM_PROMPT + "\n\n" + INTENT_SYSTEM_PROMPT).strip();
+
+	public static final String DEFAULT_COPILOT_SYSTEM_PROMPT =
+		(BASE_SYSTEM_PROMPT + "\n\n" + COPILOT_INTENT_SYSTEM_PROMPT).strip();
 
 	static {
 		// Avoid JDK module access warnings/failures when Netty tries to reach jdk.internal.misc.Unsafe.
@@ -93,10 +113,8 @@ public final class SpringAiChatServiceFactory {
 	private static Result createCopilotSdk(ChatSettings settings) {
 		try {
 			String modelName = textOrDefault(settings.copilotModel(), "claude-sonnet-4");
-			String systemPrompt = trimToNull(settings.systemPrompt());
-			if (!StringUtils.hasText(systemPrompt)) {
-				systemPrompt = DEFAULT_SYSTEM_PROMPT;
-			}
+			String systemPrompt =
+				buildEffectiveSystemPrompt(settings.systemPrompt(), AiProvider.GITHUB_COPILOT);
 
 			CopilotSdkChatService chatService = new CopilotSdkChatService(modelName, systemPrompt);
 			CopilotTokenProvider tokenProvider = new CopilotTokenProvider();
@@ -121,10 +139,7 @@ public final class SpringAiChatServiceFactory {
 			case GITHUB_COPILOT -> throw new IllegalStateException("Copilot uses dedicated SDK path");
 		};
 
-		String systemPrompt = trimToNull(settings.systemPrompt());
-		if (!StringUtils.hasText(systemPrompt)) {
-			systemPrompt = DEFAULT_SYSTEM_PROMPT;
-		}
+		String systemPrompt = buildEffectiveSystemPrompt(settings.systemPrompt(), provider);
 
 		ChatClient.Builder builder = ChatClient.builder(modelContext.chatModel())
 				.defaultSystem(systemPrompt);
@@ -244,6 +259,46 @@ public final class SpringAiChatServiceFactory {
 		}
 		String trimmed = value.trim();
 		return trimmed.isEmpty() ? null : trimmed;
+	}
+
+	private static String buildEffectiveSystemPrompt(String configuredPrompt, AiProvider provider) {
+		String systemPrompt = trimToNull(configuredPrompt);
+		if (!StringUtils.hasText(systemPrompt)) {
+			return provider == AiProvider.GITHUB_COPILOT
+				? DEFAULT_COPILOT_SYSTEM_PROMPT
+				: DEFAULT_SYSTEM_PROMPT;
+		}
+		if (provider == AiProvider.GITHUB_COPILOT) {
+			return ensureCopilotIntentGuidance(systemPrompt);
+		}
+		return ensureIntentGuidance(systemPrompt);
+	}
+
+	private static String ensureIntentGuidance(String systemPrompt) {
+		String normalized = systemPrompt.toLowerCase(Locale.ROOT);
+		if (normalized.contains("report_intent")) {
+			return systemPrompt;
+		}
+		return (systemPrompt.strip() + "\n\n" + INTENT_SYSTEM_PROMPT).strip();
+	}
+
+	private static String ensureCopilotIntentGuidance(String systemPrompt) {
+		String stripped = systemPrompt.strip();
+		if (DEFAULT_SYSTEM_PROMPT.equals(stripped) || BASE_SYSTEM_PROMPT.equals(stripped)) {
+			return DEFAULT_COPILOT_SYSTEM_PROMPT;
+		}
+		if (stripped.endsWith(INTENT_SYSTEM_PROMPT)) {
+			String base = stripped.substring(0, stripped.length() - INTENT_SYSTEM_PROMPT.length())
+				.strip();
+			return base.isEmpty()
+				? COPILOT_INTENT_SYSTEM_PROMPT
+				: (base + "\n\n" + COPILOT_INTENT_SYSTEM_PROMPT).strip();
+		}
+		String normalized = stripped.toLowerCase(Locale.ROOT);
+		if (normalized.contains("current intent") || normalized.contains("intent/status")) {
+			return stripped;
+		}
+		return (stripped + "\n\n" + COPILOT_INTENT_SYSTEM_PROMPT).strip();
 	}
 
 	/**

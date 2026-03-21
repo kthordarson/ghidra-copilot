@@ -1,5 +1,6 @@
 package ghidracopilot.ai;
 
+import java.io.Closeable;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.*;
@@ -9,6 +10,7 @@ import java.util.concurrent.TimeUnit;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.github.copilot.sdk.CopilotClient;
 import com.github.copilot.sdk.CopilotSession;
 import com.github.copilot.sdk.SystemMessageMode;
@@ -27,12 +29,22 @@ import ghidracopilot.ai.tools.ToolResult;
  * <p>
  * Launches the {@code copilot} CLI subprocess, handles auth/tokens automatically,
  * and bridges our Ghidra tools to the SDK's tool-call mechanism.
+ * <p>
+ * The SDK session is kept alive across messages so the model maintains
+ * its own conversation context natively — no need to replay history.
  */
 public final class CopilotSdkChatService implements ChatService {
 
 	private final String model;
 	private final String systemPrompt;
 	private volatile boolean cancelled = false;
+
+	// Persistent session state — reused across messages
+	private CopilotClient client;
+	private CopilotSession session;
+	private boolean sessionReady;
+	private String sessionModel; // model the current session was created with
+	private final Object sessionLock = new Object();
 
 	public CopilotSdkChatService(String model, String systemPrompt) {
 		this.model = model;
@@ -41,6 +53,19 @@ public final class CopilotSdkChatService implements ChatService {
 
 	public void cancel() {
 		cancelled = true;
+	}
+
+	/** Tear down the persistent session and subprocess. */
+	public void close() {
+		synchronized (sessionLock) {
+			sessionReady = false;
+			sessionModel = null;
+			if (client != null) {
+				try { client.close(); } catch (Exception ignored) {}
+				client = null;
+				session = null;
+			}
+		}
 	}
 
 	@Override
@@ -58,7 +83,61 @@ public final class CopilotSdkChatService implements ChatService {
 	@Override
 	public void streamChat(ChatRequest request, ChatEventListener listener) throws ChatServiceException {
 		cancelled = false;
-		try (CopilotClient client = new CopilotClient()) {
+		List<Closeable> listenerRegistrations = List.of();
+		try {
+			CopilotSession activeSession = ensureSession(request);
+
+			StringBuilder fullResponse = new StringBuilder();
+			Map<String, String> toolCallNames = new HashMap<>();
+			String[] lastIntent = { null };
+
+			listenerRegistrations = registerSessionListeners(activeSession, listener, fullResponse,
+				toolCallNames, lastIntent);
+
+			// With a persistent session the SDK tracks context — just send the new prompt
+			activeSession.sendAndWait(new MessageOptions().setPrompt(request.prompt()), 300_000)
+				.get(6, TimeUnit.MINUTES);
+
+			listener.onComplete(fullResponse.toString());
+
+		} catch (Exception ex) {
+			// Session may be stale — tear it down so next call creates a fresh one
+			close();
+			String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+			listener.onError(msg);
+			throw new ChatServiceException("Copilot SDK error: " + msg, ex);
+		} finally {
+			closeListenerRegistrations(listenerRegistrations);
+		}
+	}
+
+	/**
+	 * Returns the persistent SDK session, creating it on first call.
+	 * If history is provided on the very first message (e.g. restored from disk),
+	 * it is prepended as context text.
+	 */
+	private CopilotSession ensureSession(ChatRequest request) throws Exception {
+		synchronized (sessionLock) {
+			String requestedModel = request.modelId() != null ? request.modelId() : model;
+
+			// If the model changed mid-session, tear down so we recreate with the new model.
+			// The SDK binds model at session creation; per-message overrides aren't supported.
+			if (sessionReady && session != null) {
+				if (requestedModel != null && !requestedModel.equals(sessionModel)) {
+					Msg.info(this, "Model changed from '" + sessionModel + "' to '" +
+						requestedModel + "' — recreating Copilot SDK session");
+					close();
+				} else {
+					return session;
+				}
+			}
+
+			// Start fresh client + session
+			if (client != null) {
+				try { client.close(); } catch (Exception ignored) {}
+			}
+
+			client = new CopilotClient();
 			client.start().get(30, TimeUnit.SECONDS);
 
 			List<ToolDefinition> sdkTools = convertTools();
@@ -70,7 +149,7 @@ public final class CopilotSdkChatService implements ChatService {
 			}
 
 			SessionConfig config = new SessionConfig()
-				.setModel(request.modelId() != null ? request.modelId() : model)
+				.setModel(requestedModel)
 				.setStreaming(true)
 				.setClientName("ghidra-copilot")
 				.setOnPermissionRequest(PermissionHandler.APPROVE_ALL)
@@ -83,84 +162,23 @@ public final class CopilotSdkChatService implements ChatService {
 						.setContent(effectiveSystemPrompt));
 			}
 
-			CopilotSession session = client.createSession(config).get(30, TimeUnit.SECONDS);
+			session = client.createSession(config).get(30, TimeUnit.SECONDS);
+			sessionModel = requestedModel;
+			sessionReady = true;
 
-			StringBuilder fullResponse = new StringBuilder();
-			// Track toolCallId → toolName for completion events
-			Map<String, String> toolCallNames = new HashMap<>();
-
-			session.on(AssistantMessageDeltaEvent.class, event -> {
-				String delta = event.getData().deltaContent();
-				if (delta != null && !delta.isEmpty()) {
-					fullResponse.append(delta);
-					listener.onDelta(delta);
-				}
-			});
-
-			session.on(ToolExecutionStartEvent.class, event -> {
-				var data = event.getData();
-				String args = data.arguments() != null ? data.arguments().toString() : "{}";
-				toolCallNames.put(data.toolCallId(), data.toolName());
-				listener.onToolCallUpdate(new ToolCallUpdate(
-					data.toolCallId(), data.toolName(), args,
-					null, ToolCallUpdate.State.INVOKED, null,
-					summariseIntention(data.toolName(), args)));
-			});
-
-			session.on(ToolExecutionCompleteEvent.class, event -> {
-				var data = event.getData();
-				String name = toolCallNames.getOrDefault(data.toolCallId(), "tool");
-				String output = null;
-				String error = null;
-				if (data.result() != null) {
-					output = data.result().content();
-					if (output == null) output = data.result().detailedContent();
-				}
-				if (data.error() != null) {
-					error = data.error().message();
-				}
-				listener.onToolCallUpdate(new ToolCallUpdate(
-					data.toolCallId(), name, null,
-					output,
-					data.success() ? ToolCallUpdate.State.COMPLETED : ToolCallUpdate.State.FAILED,
-					error));
-			});
-
-			session.on(AssistantReasoningDeltaEvent.class, event -> {
-				String delta = event.getData().deltaContent();
-				if (delta != null && !delta.isEmpty()) {
-					listener.onThinking(delta);
-				}
-			});
-
-			session.on(AssistantIntentEvent.class, event -> {
-				String intent = event.getData().intent();
-				if (intent != null && !intent.isBlank()) {
-					listener.onIntent(intent);
-				}
-			});
-
-			// Build the prompt — include history context for multi-turn
-			String prompt = request.prompt();
+			// If restoring from disk, seed the session with prior context
 			if (!request.history().isEmpty()) {
-				StringBuilder contextualPrompt = new StringBuilder();
+				StringBuilder contextSeed = new StringBuilder("Prior conversation context:\n\n");
 				for (ChatMessage msg : request.history()) {
-					contextualPrompt.append(msg.role() == ChatMessage.Role.USER ? "User: " : "Assistant: ");
-					contextualPrompt.append(msg.content()).append("\n\n");
+					contextSeed.append(msg.role() == ChatMessage.Role.USER ? "User: " : "Assistant: ");
+					contextSeed.append(msg.content()).append("\n\n");
 				}
-				contextualPrompt.append("User: ").append(prompt);
-				prompt = contextualPrompt.toString();
+				// Send as a silent context message — the SDK will remember it
+				session.send(new MessageOptions().setPrompt(contextSeed.toString()))
+					.get(2, TimeUnit.MINUTES);
 			}
 
-			session.sendAndWait(new MessageOptions().setPrompt(prompt), 300_000)
-				.get(6, TimeUnit.MINUTES);
-
-			listener.onComplete(fullResponse.toString());
-
-		} catch (Exception ex) {
-			String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
-			listener.onError(msg);
-			throw new ChatServiceException("Copilot SDK error: " + msg, ex);
+			return session;
 		}
 	}
 
@@ -182,6 +200,13 @@ public final class CopilotSdkChatService implements ChatService {
 
 				String name = toolAnnotation.name().isEmpty()
 					? method.getName() : toolAnnotation.name();
+
+				// Skip report_intent — the Copilot SDK has it built-in
+				// and fires AssistantIntentEvent instead
+				if (ReportIntentTool.TOOL_NAME.equals(name)) {
+					continue;
+				}
+
 				String description = toolAnnotation.description();
 
 				Map<String, Object> schema = buildJsonSchema(method);
@@ -198,33 +223,25 @@ public final class CopilotSdkChatService implements ChatService {
 								String desc = name + (summary != null ? ": " + summary : "");
 								if (!pm.checkPermission(name, desc)) {
 									return CompletableFuture.completedFuture(
-										"Permission denied by user for " + name);
+										ToolResult.error("Permission denied by user for " + name).toJson());
 								}
 							}
 						}
 						Object[] args = resolveArguments(method, invocation);
 						Object result = method.invoke(toolObj, args);
 						if (result instanceof ToolResult tr) {
-							String text = tr.success()
-								? (tr.data() != null ? tr.message() + "\n" + tr.data() : tr.message())
-								: "ERROR: " + tr.message();
-							return CompletableFuture.completedFuture(text);
+							return CompletableFuture.completedFuture(tr.toJson());
 						}
 						return CompletableFuture.completedFuture(
 							result != null ? result.toString() : "");
 					} catch (Exception ex) {
 						Msg.error(this, "Tool '" + name + "' failed: " + ex.getMessage(), ex);
 						return CompletableFuture.completedFuture(
-							"Error executing " + name + ": " + ex.getMessage());
+							ToolResult.error("Error executing " + name + ": " + ex.getMessage()).toJson());
 					}
 				};
 
-			boolean isOverride = ReportIntentTool.TOOL_NAME.equals(name);
-				if (isOverride) {
-					sdkTools.add(ToolDefinition.createOverride(name, description, schema, handler));
-				} else {
-					sdkTools.add(ToolDefinition.create(name, description, schema, handler));
-				}
+			sdkTools.add(ToolDefinition.create(name, description, schema, handler));
 			}
 		}
 		return sdkTools;
@@ -302,5 +319,139 @@ public final class CopilotSdkChatService implements ChatService {
 
 	private String summariseIntention(String toolName, String argsJson) {
 		return IntentionSummariser.summarise(toolName, argsJson);
+	}
+
+	private List<Closeable> registerSessionListeners(CopilotSession activeSession,
+			ChatEventListener listener, StringBuilder fullResponse,
+			Map<String, String> toolCallNames, String[] lastIntent) {
+		List<Closeable> registrations = new ArrayList<>();
+
+		registrations.add(activeSession.on(AssistantMessageDeltaEvent.class, event -> {
+			String delta = event.getData().deltaContent();
+			if (delta != null && !delta.isEmpty()) {
+				fullResponse.append(delta);
+				listener.onDelta(delta);
+			}
+		}));
+
+		registrations.add(activeSession.on(AssistantMessageEvent.class, event -> {
+			String intent = extractReportIntent(event.getData());
+			emitIntent(listener, lastIntent, intent, "assistant.tool_request");
+		}));
+
+		registrations.add(activeSession.on(ToolExecutionStartEvent.class, event -> {
+			var data = event.getData();
+			String args = data.arguments() != null ? data.arguments().toString() : "{}";
+			toolCallNames.put(data.toolCallId(), data.toolName());
+			listener.onToolCallUpdate(new ToolCallUpdate(
+				data.toolCallId(), data.toolName(), args,
+				null, ToolCallUpdate.State.INVOKED, null,
+				summariseIntention(data.toolName(), args)));
+		}));
+
+		registrations.add(activeSession.on(ToolExecutionCompleteEvent.class, event -> {
+			var data = event.getData();
+			String name = toolCallNames.getOrDefault(data.toolCallId(), "tool");
+			String output = null;
+			String error = null;
+			if (data.result() != null) {
+				output = data.result().content();
+				if (output == null) output = data.result().detailedContent();
+			}
+			if (data.error() != null) {
+				error = data.error().message();
+			}
+			ToolResult parsed = ToolResult.tryParse(output);
+			ToolCallUpdate.State state = data.success()
+				? ToolCallUpdate.State.COMPLETED
+				: ToolCallUpdate.State.FAILED;
+			if (parsed != null && !parsed.success()) {
+				state = ToolCallUpdate.State.FAILED;
+				if (error == null || error.isBlank()) {
+					error = parsed.errorMessage();
+				}
+			}
+			listener.onToolCallUpdate(new ToolCallUpdate(
+				data.toolCallId(), name, null,
+				output,
+				state,
+				error));
+		}));
+
+		registrations.add(activeSession.on(AssistantReasoningDeltaEvent.class, event -> {
+			String delta = event.getData().deltaContent();
+			if (delta != null && !delta.isEmpty()) {
+				listener.onThinking(delta);
+			}
+		}));
+
+		registrations.add(activeSession.on(AssistantIntentEvent.class, event -> {
+			String intent = event.getData().intent();
+			emitIntent(listener, lastIntent, intent, "assistant.intent");
+		}));
+
+		return registrations;
+	}
+
+	private void closeListenerRegistrations(List<Closeable> listenerRegistrations) {
+		for (Closeable registration : listenerRegistrations) {
+			if (registration == null) {
+				continue;
+			}
+			try {
+				registration.close();
+			} catch (Exception ex) {
+				Msg.debug(this, "[CopilotSdkChatService] Failed to close listener registration", ex);
+			}
+		}
+	}
+
+	static String extractReportIntent(AssistantMessageEvent.AssistantMessageData data) {
+		if (data == null || data.toolRequests() == null) {
+			return null;
+		}
+		for (AssistantMessageEvent.AssistantMessageData.ToolRequest toolRequest : data.toolRequests()) {
+			if (toolRequest == null || !ReportIntentTool.TOOL_NAME.equals(toolRequest.name())) {
+				continue;
+			}
+			String intent = extractIntentArgument(toolRequest.arguments());
+			if (intent != null) {
+				return intent;
+			}
+		}
+		return null;
+	}
+
+	private static String extractIntentArgument(Object arguments) {
+		if (arguments == null) {
+			return null;
+		}
+		if (arguments instanceof Map<?, ?> map) {
+			Object intent = map.get("intent");
+			return normalizeIntent(intent != null ? intent.toString() : null);
+		}
+		if (arguments instanceof JsonNode node) {
+			return node.hasNonNull("intent") ? normalizeIntent(node.get("intent").asText()) : null;
+		}
+		return null;
+	}
+
+	private void emitIntent(ChatEventListener listener, String[] lastIntent, String intent,
+			String source) {
+		String normalized = normalizeIntent(intent);
+		if (normalized == null || normalized.equals(lastIntent[0])) {
+			return;
+		}
+		lastIntent[0] = normalized;
+		Msg.debug(this, "[CopilotSdkChatService] " + source + ": '" + normalized + "'");
+		listener.onIntent(normalized);
+	}
+
+	private static String normalizeIntent(String intent) {
+		if (intent == null) {
+			return null;
+		}
+		String normalized = intent.trim();
+		return normalized.isEmpty() ? null : normalized;
 	}
 }

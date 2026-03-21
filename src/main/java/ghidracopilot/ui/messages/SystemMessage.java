@@ -34,11 +34,11 @@ public class SystemMessage extends AbstractChatMessage {
 
 		setLayout(new BorderLayout(6, 0));
 
-		JLabel dot = new JLabel("·");
+		JLabel dot = new JLabel("\u25CF");
 		dot.setForeground(CopilotTheme.systemText());
-		dot.setFont(dot.getFont().deriveFont(Font.BOLD, dot.getFont().getSize2D() + 2f));
+		dot.setFont(dot.getFont().deriveFont(Font.BOLD, dot.getFont().getSize2D()));
 		dot.setVerticalAlignment(SwingConstants.TOP);
-		dot.setBorder(new EmptyBorder(2, 0, 0, 0));
+		dot.setBorder(new EmptyBorder(3, 0, 0, 0));
 
 		add(dot, BorderLayout.WEST);
 		add(getContentPanel(), BorderLayout.CENTER);

@@ -22,6 +22,7 @@ import java.awt.Container;
 
 import javax.swing.JComponent;
 import javax.swing.JPanel;
+import javax.swing.SwingUtilities;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 
@@ -67,8 +68,27 @@ public abstract class AbstractChatMessage extends JPanel {
 		contentComponent = MarkdownRenderer.render(markdown, textColor);
 		applyTextColor(contentComponent, textColor);
 		contentPanel.add(contentComponent, BorderLayout.CENTER);
+		MarkdownRenderer.refreshLayout(contentComponent);
 		contentPanel.revalidate();
 		contentPanel.repaint();
+		revalidateUpTree();
+		SwingUtilities.invokeLater(this::refreshLayout);
+	}
+
+	public void refreshLayout() {
+		MarkdownRenderer.refreshLayout(contentComponent);
+		contentPanel.revalidate();
+		contentPanel.repaint();
+		revalidateUpTree();
+	}
+
+	protected void revalidateUpTree() {
+		Container parent = this;
+		while (parent != null) {
+			parent.revalidate();
+			parent.repaint();
+			parent = parent.getParent();
+		}
 	}
 
 	private void applyTextColor(Component component, Color color) {

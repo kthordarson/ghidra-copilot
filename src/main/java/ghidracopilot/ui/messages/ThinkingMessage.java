@@ -3,9 +3,11 @@ package ghidracopilot.ui.messages;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Font;
 
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.SwingConstants;
 import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 
@@ -18,8 +20,10 @@ import ghidracopilot.ui.CopilotTheme;
  */
 public class ThinkingMessage extends JPanel {
 
+	private static final String LEADING_DOT = "\u25CF";
 	private static final String[] FRAMES = { "·", "· ·", "· · ·" };
 
+	private final JLabel dotLabel;
 	private final JLabel label;
 	private final Timer animationTimer;
 	private final long startTime;
@@ -33,7 +37,14 @@ public class ThinkingMessage extends JPanel {
 		setBorder(new EmptyBorder(4, 20, 4, 14));
 
 		Color textColor = CopilotTheme.thinkingText();
-		label = new JLabel("\u00b7 Thinking " + FRAMES[0]);
+		dotLabel = new JLabel(LEADING_DOT);
+		dotLabel.setForeground(textColor);
+		dotLabel.setFont(dotLabel.getFont().deriveFont(Font.BOLD, dotLabel.getFont().getSize2D()));
+		dotLabel.setVerticalAlignment(SwingConstants.TOP);
+		dotLabel.setBorder(new EmptyBorder(3, 0, 0, 0));
+		add(dotLabel, BorderLayout.WEST);
+
+		label = new JLabel("Thinking " + FRAMES[0]);
 		label.setForeground(textColor);
 		label.setFont(label.getFont().deriveFont(java.awt.Font.ITALIC));
 		add(label, BorderLayout.CENTER);
@@ -50,7 +61,7 @@ public class ThinkingMessage extends JPanel {
 		frame = (frame + 1) % FRAMES.length;
 		long elapsed = (System.currentTimeMillis() - startTime) / 1000;
 		String time = elapsed >= 2 ? " (" + elapsed + "s)" : "";
-		label.setText("\u00b7 Thinking " + FRAMES[frame] + time);
+		label.setText("Thinking " + FRAMES[frame] + time);
 	}
 
 	/**

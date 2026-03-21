@@ -18,10 +18,14 @@ package ghidracopilot.ui.components;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Insets;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,6 +45,7 @@ import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -54,7 +59,7 @@ import ghidracopilot.model.ModelRegistry.ModelEntry;
 public class ChatInput extends JPanel {
 
 	private static final int MIN_ROWS = 1;
-	private static final int MAX_ROWS = 6;
+	private static final int MAX_ROWS = 5;
 	private static final String CARD_PROMPT = "prompt";
 	private static final String CARD_PERMISSION = "permission";
 
@@ -75,6 +80,7 @@ public class ChatInput extends JPanel {
 	private final List<String> promptHistory = new ArrayList<>();
 	private int historyIndex = -1;
 	private String draftText = "";
+	private static final int MAX_HISTORY = 200;
 
 	// Permission prompt state
 	private JPanel permissionCard;
@@ -165,9 +171,15 @@ public class ChatInput extends JPanel {
 
 		// Auto-grow the text area as the user types
 		promptField.getDocument().addDocumentListener(new DocumentListener() {
-			@Override public void insertUpdate(DocumentEvent e) { adjustHeight(); }
-			@Override public void removeUpdate(DocumentEvent e) { adjustHeight(); }
-			@Override public void changedUpdate(DocumentEvent e) { adjustHeight(); }
+			@Override public void insertUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+			@Override public void removeUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+			@Override public void changedUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+		});
+		promptScroll.getViewport().addComponentListener(new ComponentAdapter() {
+			@Override
+			public void componentResized(ComponentEvent e) {
+				scheduleAdjustHeight();
+			}
 		});
 
 		sendButton = new JButton("Send");
@@ -207,6 +219,15 @@ public class ChatInput extends JPanel {
 		cardPanel.add(promptCard, CARD_PROMPT);
 
 		add(cardPanel, BorderLayout.CENTER);
+
+		// Load persisted prompt history
+		try {
+			promptHistory.addAll(
+				ghidracopilot.ai.session.SessionStorage.loadPromptHistory());
+		}
+		catch (Exception ignored) {}
+
+		scheduleAdjustHeight();
 	}
 
 	// ---- Permission prompt ----
@@ -361,11 +382,38 @@ public class ChatInput extends JPanel {
 
 	// ---- Normal input methods ----
 
+	private void scheduleAdjustHeight() {
+		SwingUtilities.invokeLater(this::adjustHeight);
+	}
+
 	private void adjustHeight() {
-		int lineCount = promptField.getLineCount();
-		int rows = Math.max(MIN_ROWS, Math.min(lineCount, MAX_ROWS));
-		promptField.setRows(rows);
-		revalidate();
+		int availableWidth = promptScroll.getViewport().getWidth();
+		if (availableWidth <= 0) {
+			availableWidth = promptScroll.getWidth();
+		}
+		if (availableWidth <= 0) {
+			return;
+		}
+
+		promptField.setSize(availableWidth, Short.MAX_VALUE);
+
+		int minHeight = heightForRows(MIN_ROWS);
+		int maxHeight = heightForRows(MAX_ROWS);
+		int targetHeight = Math.max(minHeight,
+			Math.min(promptField.getPreferredSize().height, maxHeight));
+
+		Dimension current = promptScroll.getPreferredSize();
+		if (current.height != targetHeight) {
+			promptScroll.setPreferredSize(new Dimension(current.width, targetHeight));
+			revalidate();
+			repaint();
+		}
+	}
+
+	private int heightForRows(int rows) {
+		int lineHeight = promptField.getFontMetrics(promptField.getFont()).getHeight();
+		Insets insets = promptField.getInsets();
+		return insets.top + insets.bottom + (lineHeight * rows);
 	}
 
 	public void addSendAction(ActionListener listener) {
@@ -399,11 +447,28 @@ public class ChatInput extends JPanel {
 	public void clearPrompt() {
 		String text = promptField.getText().trim();
 		if (!text.isEmpty()) {
-			promptHistory.add(text);
+			// Deduplicate: don't add if it's the same as the last entry
+			if (promptHistory.isEmpty() || !promptHistory.get(promptHistory.size() - 1).equals(text)) {
+				promptHistory.add(text);
+				// Trim to max
+				while (promptHistory.size() > MAX_HISTORY) {
+					promptHistory.remove(0);
+				}
+			}
+			// Persist to disk in background
+			List<String> snapshot = List.copyOf(promptHistory);
+			new Thread(() -> ghidracopilot.ai.session.SessionStorage.savePromptHistory(
+				new ArrayList<>(snapshot)), "copilot-history-save").start();
 		}
 		historyIndex = -1;
 		draftText = "";
 		promptField.setText("");
+		promptField.setCaretPosition(0);
+		promptScroll.setPreferredSize(
+			new Dimension(promptScroll.getPreferredSize().width, heightForRows(MIN_ROWS)));
+		revalidate();
+		repaint();
+		scheduleAdjustHeight();
 	}
 
 	/**

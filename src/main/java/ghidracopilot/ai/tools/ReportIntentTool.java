@@ -30,6 +30,8 @@ public class ReportIntentTool {
 			@ToolParam(description = "A short description of what you are currently doing, "
 				+ "4 words max, gerund form.")
 			String intent) {
+		ghidra.util.Msg.debug(this, "[ReportIntentTool] reportIntent called with: '"
+			+ intent + "', listener=" + (intentListener != null ? "SET" : "NULL"));
 		Consumer<String> listener = this.intentListener;
 		if (listener != null && intent != null && !intent.isBlank()) {
 			listener.accept(intent.trim());
