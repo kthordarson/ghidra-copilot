@@ -17,72 +17,46 @@ package ghidracopilot.ui.messages;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Dimension;
 import java.awt.Component;
 import java.awt.Container;
 
 import javax.swing.JComponent;
 import javax.swing.JPanel;
-import javax.swing.border.EmptyBorder;
+import javax.swing.SwingUtilities;
 
 import org.fife.ui.rsyntaxtextarea.RSyntaxTextArea;
 
 /**
- * Base message bubble used for rendering chat messages with common styling.
+ * Base class for chat messages. Subclasses define their own layout
+ * and add {@link #getContentPanel()} wherever content should appear.
  */
 public abstract class AbstractChatMessage extends JPanel {
 
-	private static final int MAX_CONTENT_WIDTH = 520;
-
-	private final ChatAlignment alignment;
-	private final JPanel bubblePanel;
 	private final Color textColor;
+	private final JPanel contentPanel;
 	private JComponent contentComponent;
 
-	protected AbstractChatMessage(String markdown, ChatAlignment alignment, Color backgroundColor,
-			Color borderColor, Color textColor) {
-		this(markdown, alignment, backgroundColor, borderColor, textColor, true);
-	}
-
-	protected AbstractChatMessage(String markdown, ChatAlignment alignment, Color backgroundColor,
-			Color borderColor, Color textColor, boolean bubbleChrome) {
-
-		this.alignment = alignment;
+	protected AbstractChatMessage(String markdown, Color textColor) {
 		this.textColor = textColor;
 
-		setLayout(new BorderLayout());
 		setOpaque(false);
 		setAlignmentY(Component.TOP_ALIGNMENT);
-		setAlignmentX(switch (alignment) {
-			case LEFT -> Component.LEFT_ALIGNMENT;
-			case RIGHT -> Component.RIGHT_ALIGNMENT;
-			case CENTER -> Component.CENTER_ALIGNMENT;
-		});
-		setMaximumSize(new Dimension(MAX_CONTENT_WIDTH, Integer.MAX_VALUE));
+		setAlignmentX(Component.LEFT_ALIGNMENT);
+
+		contentPanel = new JPanel(new BorderLayout());
+		contentPanel.setOpaque(false);
 
 		contentComponent = MarkdownRenderer.render(markdown, textColor);
 		applyTextColor(contentComponent, textColor);
-
-		if (bubbleChrome) {
-			bubblePanel = new SpeechBubblePanel(alignment, backgroundColor, borderColor);
-		}
-		else {
-			bubblePanel = new JPanel(new BorderLayout());
-			bubblePanel.setOpaque(false);
-			bubblePanel.setBorder(new EmptyBorder(4, 0, 4, 0));
-		}
-		bubblePanel.add(contentComponent, BorderLayout.CENTER);
-		bubblePanel.setMaximumSize(new Dimension(MAX_CONTENT_WIDTH, Integer.MAX_VALUE));
-
-		add(bubblePanel, BorderLayout.CENTER);
+		contentPanel.add(contentComponent, BorderLayout.CENTER);
 	}
 
 	public ChatAlignment getAlignment() {
-		return alignment;
+		return ChatAlignment.LEFT;
 	}
 
-	protected JPanel getBubblePanel() {
-		return bubblePanel;
+	protected JPanel getContentPanel() {
+		return contentPanel;
 	}
 
 	protected JComponent getContentComponent() {
@@ -90,12 +64,31 @@ public abstract class AbstractChatMessage extends JPanel {
 	}
 
 	public void setMarkdown(String markdown) {
-		bubblePanel.remove(contentComponent);
+		contentPanel.remove(contentComponent);
 		contentComponent = MarkdownRenderer.render(markdown, textColor);
 		applyTextColor(contentComponent, textColor);
-		bubblePanel.add(contentComponent, BorderLayout.CENTER);
-		bubblePanel.revalidate();
-		bubblePanel.repaint();
+		contentPanel.add(contentComponent, BorderLayout.CENTER);
+		MarkdownRenderer.refreshLayout(contentComponent);
+		contentPanel.revalidate();
+		contentPanel.repaint();
+		revalidateUpTree();
+		SwingUtilities.invokeLater(this::refreshLayout);
+	}
+
+	public void refreshLayout() {
+		MarkdownRenderer.refreshLayout(contentComponent);
+		contentPanel.revalidate();
+		contentPanel.repaint();
+		revalidateUpTree();
+	}
+
+	protected void revalidateUpTree() {
+		Container parent = this;
+		while (parent != null) {
+			parent.revalidate();
+			parent.repaint();
+			parent = parent.getParent();
+		}
 	}
 
 	private void applyTextColor(Component component, Color color) {

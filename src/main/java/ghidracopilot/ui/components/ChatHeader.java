@@ -28,6 +28,7 @@ import javax.swing.border.EmptyBorder;
 public class ChatHeader extends JPanel {
 
 	private final JLabel titleLabel;
+	private final JLabel usageLabel;
 
 	public ChatHeader() {
 		super(new BorderLayout());
@@ -35,9 +36,24 @@ public class ChatHeader extends JPanel {
 
 		titleLabel = new JLabel("Copilot Chat", SwingConstants.LEFT);
 		add(titleLabel, BorderLayout.CENTER);
+
+		usageLabel = new JLabel("", SwingConstants.RIGHT);
+		usageLabel.setFont(usageLabel.getFont().deriveFont(usageLabel.getFont().getSize2D() - 1f));
+		add(usageLabel, BorderLayout.EAST);
 	}
 
 	public void setTitleText(String text) {
 		titleLabel.setText(text);
+	}
+
+	/**
+	 * Update the token usage display.
+	 */
+	public void updateUsage(int promptTokens, int completionTokens) {
+		int total = promptTokens + completionTokens;
+		String display = total >= 1000
+				? String.format("%.1fk tokens", total / 1000.0)
+				: total + " tokens";
+		usageLabel.setText(display);
 	}
 }

@@ -19,18 +19,21 @@ import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JPanel;
+import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.Scrollable;
 import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
 
 import ghidracopilot.ui.messages.AbstractChatMessage;
-import ghidracopilot.ui.messages.ChatAlignment;
 import ghidracopilot.ui.messages.SystemMessage;
+import ghidracopilot.ui.messages.ThinkingMessage;
 import ghidracopilot.ui.messages.ToolCallMessage;
 
 /**
@@ -43,57 +46,80 @@ public class ChatMessages extends JPanel {
 
 	public ChatMessages() {
 		super(new BorderLayout());
+		setOpaque(true);
+		setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
 		setBorder(new EmptyBorder(0, 10, 0, 10));
 
 		messageList = new MessageListPanel();
 
 		scrollPane = new JScrollPane(messageList);
 		scrollPane.setBorder(null);
+		scrollPane.setOpaque(true);
+		scrollPane.getViewport().setOpaque(true);
+		scrollPane.setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
+		scrollPane.getViewport().setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
 		scrollPane.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
 		scrollPane.getVerticalScrollBar().setUnitIncrement(16);
+		scrollPane.getViewport().addComponentListener(new ComponentAdapter() {
+			@Override
+			public void componentResized(ComponentEvent e) {
+				refreshMessageLayouts();
+			}
+		});
 
 		add(scrollPane, BorderLayout.CENTER);
 	}
 
 	public void appendMessage(AbstractChatMessage message) {
-		JPanel row = new JPanel();
+		int verticalGap = 8;
+		boolean wasAtBottom = isNearBottom();
+
+		JPanel row = new JPanel(new BorderLayout());
 		row.setOpaque(false);
-		row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
-		row.setBorder(new EmptyBorder(4, 16, 4, 16));
 		row.setAlignmentX(Component.LEFT_ALIGNMENT);
-
-		message.setAlignmentY(Component.TOP_ALIGNMENT);
-
-		if (message.getAlignment() == ChatAlignment.RIGHT) {
-			row.add(Box.createHorizontalGlue());
-			row.add(message);
-		}
-		else if (message.getAlignment() == ChatAlignment.CENTER) {
-			row.add(Box.createHorizontalGlue());
-			row.add(message);
-			row.add(Box.createHorizontalGlue());
-		}
-		else {
-			row.add(message);
-			row.add(Box.createHorizontalGlue());
-		}
+		row.add(message, BorderLayout.CENTER);
 
 		messageList.add(row);
-		messageList.add(Box.createVerticalStrut(12));
+		messageList.add(Box.createVerticalStrut(verticalGap));
 
 		messageList.revalidate();
 		messageList.repaint();
+		SwingUtilities.invokeLater(this::refreshMessageLayouts);
 
-		SwingUtilities.invokeLater(() -> {
-			scrollPane.getVerticalScrollBar().setValue(
-				scrollPane.getVerticalScrollBar().getMaximum());
-		});
+		if (wasAtBottom) {
+			scrollToBottom();
+		}
 	}
 
 	public void clearMessages() {
 		messageList.removeAll();
 		messageList.revalidate();
 		messageList.repaint();
+	}
+
+	public void removeMessage(AbstractChatMessage message) {
+		if (message == null) {
+			return;
+		}
+		for (int i = 0; i < messageList.getComponentCount(); i++) {
+			Component child = messageList.getComponent(i);
+			if (!(child instanceof JPanel row)) {
+				continue;
+			}
+			for (Component inner : row.getComponents()) {
+				if (inner != message) {
+					continue;
+				}
+				messageList.remove(i);
+				if (i < messageList.getComponentCount() &&
+					messageList.getComponent(i) instanceof Box.Filler) {
+					messageList.remove(i);
+				}
+				messageList.revalidate();
+				messageList.repaint();
+				return;
+			}
+		}
 	}
 
 	public ghidracopilot.ui.messages.UserMessage addUserMessage(String markdown) {
@@ -110,6 +136,13 @@ public class ChatMessages extends JPanel {
 		return message;
 	}
 
+	public ghidracopilot.ui.messages.AssistantMessage addThinkingContentMessage(String markdown) {
+		ghidracopilot.ui.messages.AssistantMessage message =
+			new ghidracopilot.ui.messages.AssistantMessage(markdown, true);
+		appendMessage(message);
+		return message;
+	}
+
 	public SystemMessage addSystemMessage(String markdown) {
 		SystemMessage message = new SystemMessage(markdown);
 		appendMessage(message);
@@ -117,9 +150,118 @@ public class ChatMessages extends JPanel {
 	}
 
 	public ToolCallMessage addToolCallMessage(String toolName, String inputJson) {
-		ToolCallMessage message = new ToolCallMessage(toolName, inputJson);
+		return addToolCallMessage(toolName, inputJson, null);
+	}
+
+	public ToolCallMessage addToolCallMessage(String toolName, String inputJson,
+			String intentionSummary) {
+		ToolCallMessage message = new ToolCallMessage(toolName, inputJson, intentionSummary);
 		appendMessage(message);
 		return message;
+	}
+
+	public ghidracopilot.ui.messages.UndoCheckpointMessage addUndoCheckpoint(
+			int mutationCount, java.util.List<String> mutationDescriptions,
+			ghidra.program.model.listing.Program program) {
+		ghidracopilot.ui.messages.UndoCheckpointMessage checkpoint =
+			new ghidracopilot.ui.messages.UndoCheckpointMessage(
+				mutationCount, mutationDescriptions, program);
+		appendMessage(checkpoint);
+		return checkpoint;
+	}
+
+	/**
+	 * Add an animated thinking indicator to the transcript.
+	 */
+	public ThinkingMessage addThinkingIndicator() {
+		ThinkingMessage indicator = new ThinkingMessage();
+		boolean wasAtBottom = isNearBottom();
+
+		JPanel row = new JPanel(new BorderLayout());
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(4, 0, 4, 0));
+		row.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.add(indicator, BorderLayout.CENTER);
+
+		messageList.add(row);
+		messageList.revalidate();
+		messageList.repaint();
+
+		if (wasAtBottom) {
+			scrollToBottom();
+		}
+
+		return indicator;
+	}
+
+	/**
+	 * Remove the thinking indicator from the transcript.
+	 */
+	public void removeThinkingIndicator(ThinkingMessage indicator) {
+		if (indicator == null) {
+			return;
+		}
+		indicator.dismiss();
+		// Find and remove the row containing this indicator
+		for (int i = messageList.getComponentCount() - 1; i >= 0; i--) {
+			Component child = messageList.getComponent(i);
+			if (child instanceof JPanel row) {
+				for (Component inner : row.getComponents()) {
+					if (inner == indicator) {
+						messageList.remove(i);
+						messageList.revalidate();
+						messageList.repaint();
+						return;
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Returns {@code true} when the viewport is scrolled to within ~50px of the bottom.
+	 */
+	private boolean isNearBottom() {
+		JScrollBar vbar = scrollPane.getVerticalScrollBar();
+		int extent = vbar.getModel().getExtent();
+		int max = vbar.getMaximum();
+		int value = vbar.getValue();
+		return value + extent >= max - 50;
+	}
+
+	/**
+	 * Scrolls to the bottom on the next EDT pass. Public so streaming deltas
+	 * can keep the view pinned when the user was already at the bottom.
+	 */
+	public void scrollToBottom() {
+		SwingUtilities.invokeLater(() ->
+			scrollPane.getVerticalScrollBar().setValue(
+				scrollPane.getVerticalScrollBar().getMaximum()));
+	}
+
+	/**
+	 * Scrolls to the bottom only if the user is already near the bottom.
+	 * Call this when content grows (e.g. streaming deltas) so the view stays
+	 * pinned unless the user intentionally scrolled up.
+	 */
+	public void scrollIfAtBottom() {
+		if (isNearBottom()) {
+			scrollToBottom();
+		}
+	}
+
+	private void refreshMessageLayouts() {
+		for (Component rowComponent : messageList.getComponents()) {
+			if (rowComponent instanceof JPanel row) {
+				for (Component child : row.getComponents()) {
+					if (child instanceof AbstractChatMessage message) {
+						message.refreshLayout();
+					}
+				}
+			}
+		}
+		messageList.revalidate();
+		messageList.repaint();
 	}
 
 	private static class MessageListPanel extends JPanel implements Scrollable {

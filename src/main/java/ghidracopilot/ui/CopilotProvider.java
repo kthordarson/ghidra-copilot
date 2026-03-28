@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.swing.BoxLayout;
 import javax.swing.JComponent;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
@@ -34,18 +35,20 @@ import docking.WindowPosition;
 import docking.action.DockingAction;
 import docking.action.ToolBarData;
 import ghidracopilot.ai.ChatMessage;
+import ghidracopilot.ai.ChatEventListener;
 import ghidracopilot.ai.ChatRequest;
 import ghidracopilot.ai.ChatService;
 import ghidracopilot.ai.ChatServiceException;
-import ghidracopilot.ai.InteractionMode;
+import ghidracopilot.ai.PermissionManager;
 import ghidracopilot.ai.SpringAiChatServiceFactory.Result;
 import ghidracopilot.ai.ToolCallObserver;
 import ghidracopilot.ai.ToolCallUpdate;
 import ghidracopilot.ai.ChatServiceCancelledException;
+import ghidracopilot.ai.tools.ReportIntentTool;
 import ghidracopilot.model.ModelRegistry.ModelEntry;
-import ghidracopilot.ui.components.ChatHeader;
 import ghidracopilot.ui.components.ChatInput;
 import ghidracopilot.ui.components.ChatMessages;
+import ghidracopilot.ui.components.IntentStrip;
 import ghidracopilot.ui.context.ContextSnapshotBuilder;
 import ghidracopilot.ui.messages.ToolCallMessage;
 import ghidracopilot.ui.messages.ToolCallState;
@@ -61,19 +64,22 @@ import resources.Icons;
 public class CopilotProvider extends ComponentProvider {
 
 	private final JPanel panel;
-	private final ChatHeader chatHeader;
 	private final ChatMessages chatMessages;
 	private final ChatInput chatInput;
+	private final IntentStrip intentStrip;
 	private final ProgramPlugin programPlugin;
 	private final List<ChatMessage> messageHistory = new ArrayList<>();
+	private final PermissionManager permissionManager = new PermissionManager();
 	private ChatService chatService;
 	private String chatInitializationError;
 	private String providerDisplayName;
 	private String providerId;
 	private DockingAction newChatAction;
+	private DockingAction sessionListAction;
 	private boolean requestInFlight;
 	private SwingWorker<String, Void> activeRequest;
 	private boolean stopRequested;
+	private ghidracopilot.ai.session.ChatSession currentSession;
 
 	public CopilotProvider(Plugin plugin, String owner) {
 		super(plugin.getTool(), "Ghidra Copilot", owner);
@@ -84,17 +90,40 @@ public class CopilotProvider extends ComponentProvider {
 		setDefaultWindowPosition(WindowPosition.RIGHT);
 
 		panel = new JPanel(new BorderLayout());
-		chatHeader = new ChatHeader();
+		panel.setBackground(ghidracopilot.ui.CopilotTheme.chatBackground());
 		chatMessages = new ChatMessages();
 		chatInput = new ChatInput();
+		intentStrip = new IntentStrip();
 
-		panel.add(chatHeader, BorderLayout.NORTH);
+		// Bottom section: intent strip + input stacked vertically
+		JPanel bottomPanel = new JPanel();
+		bottomPanel.setLayout(new BoxLayout(bottomPanel, BoxLayout.Y_AXIS));
+		bottomPanel.setOpaque(false);
+		bottomPanel.add(intentStrip);
+		bottomPanel.add(chatInput);
+
 		panel.add(chatMessages, BorderLayout.CENTER);
-		panel.add(chatInput, BorderLayout.SOUTH);
+		panel.add(bottomPanel, BorderLayout.SOUTH);
 
 		chatInput.addSendAction(e -> handleSend());
 		chatInput.addStopAction(e -> handleStop());
 		chatInput.setInputEnabled(false);
+
+		// Wire permission manager to show prompts in the input area
+		permissionManager.setPrompter(request ->
+			chatInput.showPermissionPrompt(request.toolName(), request.description()));
+
+		// Escape cancels the active request from anywhere in the panel
+		javax.swing.KeyStroke escKey = javax.swing.KeyStroke.getKeyStroke(
+			java.awt.event.KeyEvent.VK_ESCAPE, 0);
+		panel.getInputMap(javax.swing.JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+			.put(escKey, "cancel-request");
+		panel.getActionMap().put("cancel-request", new javax.swing.AbstractAction() {
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				handleStop();
+			}
+		});
 
 		buildActions();
 	}
@@ -110,19 +139,38 @@ public class CopilotProvider extends ComponentProvider {
 		newChatAction.markHelpUnnecessary();
 		newChatAction.setEnabled(true);
 		addLocalAction(newChatAction);
+
+		sessionListAction = new DockingAction("Session History", getOwner()) {
+			@Override
+			public void actionPerformed(ActionContext context) {
+				showSessionList();
+			}
+		};
+		sessionListAction.setToolBarData(new ToolBarData(Icons.NAVIGATE_ON_INCOMING_EVENT_ICON, null));
+		sessionListAction.markHelpUnnecessary();
+		sessionListAction.setEnabled(true);
+		addLocalAction(sessionListAction);
+	}
+
+	public PermissionManager permissionManager() {
+		return permissionManager;
 	}
 
 	private void resetConversation(String reason) {
 		Runnable reset = () -> {
+			// Save current session before clearing
+			saveCurrentSession();
+
 			chatMessages.clearMessages();
 			messageHistory.clear();
 			chatInput.clearPrompt();
+			currentSession = null;
 
 			if (reason != null && !reason.isBlank()) {
 				chatMessages.addSystemMessage(reason);
 			}
 			if (providerDisplayName != null && !providerDisplayName.isBlank()) {
-				chatMessages.addSystemMessage("Connected to **" + providerDisplayName + "**");
+				chatMessages.addSystemMessage("Connected to provider: **" + providerDisplayName + "**");
 			}
 			else if (chatInitializationError != null && !chatInitializationError.isBlank()) {
 				chatMessages.addSystemMessage("Spring AI is unavailable: " + chatInitializationError);
@@ -144,9 +192,8 @@ public class CopilotProvider extends ComponentProvider {
 		if (prompt.isEmpty()) {
 			return;
 		}
-		InteractionMode interactionMode = chatInput.getInteractionMode();
 		chatInput.clearPrompt();
-		sendPrompt(prompt, interactionMode);
+		sendPrompt(prompt);
 	}
 
 	@Override
@@ -154,7 +201,7 @@ public class CopilotProvider extends ComponentProvider {
 		return panel;
 	}
 
-	public void sendPrompt(String promptText, InteractionMode interactionMode) {
+	public void sendPrompt(String promptText) {
 		if (promptText == null) {
 			return;
 		}
@@ -162,20 +209,19 @@ public class CopilotProvider extends ComponentProvider {
 		if (prompt.isEmpty()) {
 			return;
 		}
-		InteractionMode mode = interactionMode != null ? interactionMode : chatInput.getInteractionMode();
 		if (requestInFlight) {
 			SwingUtilities.invokeLater(() -> chatMessages.addSystemMessage(
 				"Finish the active request or stop it before sending another prompt."));
 			return;
 		}
-		SwingUtilities.invokeLater(() -> beginChatRequest(prompt, mode, chatInput.getSelectedModel()));
+		SwingUtilities.invokeLater(() -> beginChatRequest(prompt, chatInput.getSelectedModel()));
 	}
 
-	public void sendPrompt(String promptText, InteractionMode interactionMode, String preface) {
-		if (StringUtils.hasText(preface)) {
+	public void sendPrompt(String promptText, String preface) {
+		if (org.springframework.util.StringUtils.hasText(preface)) {
 			addSystemMessage(preface);
 		}
-		sendPrompt(promptText, interactionMode);
+		sendPrompt(promptText);
 	}
 
 	public void addSystemMessage(String text) {
@@ -191,10 +237,11 @@ public class CopilotProvider extends ComponentProvider {
 		}
 	}
 
-	private void beginChatRequest(String prompt, InteractionMode interactionMode, ModelEntry selectedModel) {
+	private void beginChatRequest(String prompt, ModelEntry selectedModel) {
 		if (requestInFlight) {
 			return;
 		}
+		ensureCurrentSession();
 		stopRequested = false;
 		chatMessages.addUserMessage(prompt);
 
@@ -225,20 +272,122 @@ public class CopilotProvider extends ComponentProvider {
 		chatInput.setSendingEnabled(false);
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
-		String contextualSystemPrompt = ContextSnapshotBuilder.build(programPlugin, interactionMode);
+		String contextualSystemPrompt = ContextSnapshotBuilder.build(programPlugin, null);
 		Map<String, ToolCallMessage> activeToolMessages = new ConcurrentHashMap<>();
 		ToolCallObserver toolCallObserver = update -> SwingUtilities.invokeLater(
 			() -> handleToolCallUpdate(update, activeToolMessages));
 		ChatRequest chatRequest =
-			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver,
-				interactionMode);
+			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver);
 		ChatMessage userEntry = ChatMessage.user(prompt);
 		messageHistory.add(userEntry);
+
+		// Intent strip shows "Thinking" until first delta or tool call
+		intentStrip.setThinking();
+
+			// Streaming state — sealed when tool calls interrupt, so next delta creates a new message
+			final ghidracopilot.ui.messages.AssistantMessage[] streamingMessage = { null };
+			final ghidracopilot.ui.messages.AssistantMessage[] thinkingMessage = { null };
+			final boolean[] sealedByToolCall = { false };
+			final StringBuilder pendingLeadingWhitespace = new StringBuilder();
+			final StringBuilder allAccumulatedText = new StringBuilder();
+
+		// Track mutation tool completions for undo checkpoint
+		final java.util.concurrent.atomic.AtomicInteger turnMutationCount =
+			new java.util.concurrent.atomic.AtomicInteger(0);
+		final java.util.List<String> turnMutationDescriptions =
+			java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+
+		ChatEventListener streamListener = new ChatEventListener() {
+				@Override
+				public void onDelta(String delta) {
+					SwingUtilities.invokeLater(() -> {
+						if (delta == null || delta.isEmpty()) {
+							return;
+						}
+						boolean creatingNewMessage = streamingMessage[0] == null || sealedByToolCall[0];
+						if (creatingNewMessage && delta.isBlank()) {
+							pendingLeadingWhitespace.append(delta);
+							allAccumulatedText.append(delta);
+							return;
+						}
+						// Seal thinking message when real content starts
+						if (thinkingMessage[0] != null) {
+							thinkingMessage[0] = null;
+						}
+						if (creatingNewMessage) {
+							streamingMessage[0] = chatMessages.addAssistantMessage("");
+							sealedByToolCall[0] = false;
+							if (pendingLeadingWhitespace.length() > 0) {
+								streamingMessage[0].appendDelta(pendingLeadingWhitespace.toString());
+								pendingLeadingWhitespace.setLength(0);
+							}
+						}
+						streamingMessage[0].appendDelta(delta);
+						allAccumulatedText.append(delta);
+						chatMessages.scrollIfAtBottom();
+				});
+			}
+
+			@Override
+			public void onThinking(String delta) {
+				SwingUtilities.invokeLater(() -> {
+					if (thinkingMessage[0] == null) {
+						thinkingMessage[0] = chatMessages.addThinkingContentMessage("");
+					}
+					thinkingMessage[0].appendDelta(delta);
+					chatMessages.scrollIfAtBottom();
+				});
+			}
+
+			@Override
+			public void onIntent(String intent) {
+				SwingUtilities.invokeLater(() -> {
+					if (intent != null && !intent.isBlank()) {
+						Msg.debug(this, "[CopilotProvider] onIntent callback: '" + intent.trim() + "'");
+						intentStrip.setIntent(intent.trim());
+					}
+				});
+			}
+
+			@Override
+			public void onToolCallUpdate(ToolCallUpdate update) {
+				SwingUtilities.invokeLater(() -> {
+					sealedByToolCall[0] = true;
+					handleToolCallUpdate(update, activeToolMessages);
+
+					// Track completed mutation tools for undo checkpoint
+					if (update.state() == ghidracopilot.ai.ToolCallUpdate.State.COMPLETED
+							&& ghidracopilot.ai.tools.CopilotToolRegistry
+								.requiresPermissionByName(update.toolName())) {
+						turnMutationCount.incrementAndGet();
+						turnMutationDescriptions.add(
+							ToolCallMessage.displayNameFor(update.toolName()));
+					}
+				});
+			}
+
+			@Override
+			public void onUsage(int promptTokens, int completionTokens) {
+				SwingUtilities.invokeLater(() ->
+					chatInput.updateUsage(promptTokens, completionTokens));
+			}
+
+			@Override
+			public void onComplete(String fullResponse) {
+				// Completion handled in SwingWorker.done()
+			}
+
+			@Override
+			public void onError(String errorMessage) {
+				// Errors handled in SwingWorker.done()
+			}
+		};
 
 		activeRequest = new SwingWorker<String, Void>() {
 			@Override
 			protected String doInBackground() throws Exception {
-				return chatService.chat(chatRequest);
+				chatService.streamChat(chatRequest, streamListener);
+				return null;
 			}
 
 			@Override
@@ -247,21 +396,38 @@ public class CopilotProvider extends ComponentProvider {
 				activeRequest = null;
 				chatInput.setRequestInProgress(false);
 				chatInput.setSendingEnabled(true);
+				intentStrip.setIdle();
 				if (isCancelled() || stopRequested) {
 					handleCancellation(userEntry);
 					return;
 				}
-				try {
-					String response = get();
-					response = response != null ? response.trim() : "";
-					if (response.isEmpty()) {
-						chatMessages.addAssistantMessage(
-							"(The AI model did not return any content.)");
+					try {
+						get();
+						if (streamingMessage[0] != null &&
+							streamingMessage[0].getAccumulatedText().isBlank()) {
+							chatMessages.removeMessage(streamingMessage[0]);
+							streamingMessage[0] = null;
+						}
+						String fullText = allAccumulatedText.toString();
+						if (fullText.isBlank() && streamingMessage[0] == null) {
+							chatMessages.addAssistantMessage(
+								"(The AI model did not return any content.)");
 					}
-					else {
-						chatMessages.addAssistantMessage(response);
-						messageHistory.add(ChatMessage.assistant(response));
+					else if (!fullText.isBlank()) {
+						messageHistory.add(ChatMessage.assistant(fullText));
 					}
+
+					// Add undo checkpoint if this turn had mutations
+					int mutations = turnMutationCount.get();
+					if (mutations > 0 && programPlugin != null
+							&& programPlugin.getCurrentProgram() != null) {
+						chatMessages.addUndoCheckpoint(
+							mutations,
+							new ArrayList<>(turnMutationDescriptions),
+							programPlugin.getCurrentProgram());
+					}
+
+					saveCurrentSession();
 				}
 				catch (Exception ex) {
 					if (stopRequested || isCancellation(ex)) {
@@ -304,7 +470,7 @@ public class CopilotProvider extends ComponentProvider {
 			if (!previouslyConfigured || !Objects.equals(previousProviderId, providerId)
 					|| previousError != null) {
 				chatMessages.addSystemMessage(
-					"Connected to **" + providerDisplayName + "**");
+					"Connected to provider: **" + providerDisplayName + "**");
 				messageHistory.clear();
 			}
 		}
@@ -330,30 +496,62 @@ public class CopilotProvider extends ComponentProvider {
 		SwingUtilities.invokeLater(() -> chatInput.setModelEntries(entries, defaultModelKey));
 	}
 
+	/**
+	 * Connect the report_intent tool to this provider's intent strip.
+	 */
+	public void wireIntentTool() {
+		ReportIntentTool tool = ghidracopilot.ai.tools.CopilotToolRegistry.reportIntentTool();
+		if (tool != null) {
+			tool.setIntentListener(intent ->
+				SwingUtilities.invokeLater(() -> intentStrip.setIntent(intent)));
+		}
+	}
+
 	private void handleToolCallUpdate(ToolCallUpdate update, Map<String, ToolCallMessage> registry) {
 		if (update == null || !StringUtils.hasText(update.id())) {
+			return;
+		}
+
+		// Suppress report_intent from the transcript — route to intent strip
+		if (ReportIntentTool.TOOL_NAME.equals(update.toolName())) {
+			if (StringUtils.hasText(update.intentionSummary())) {
+				intentStrip.setIntent(update.intentionSummary());
+			}
 			return;
 		}
 
 		String callId = update.id();
 		String arguments = StringUtils.hasText(update.argumentsJson()) ? update.argumentsJson() : "{}";
 
+		Msg.debug(this, "ToolCallUpdate [" + update.state() + "] " + update.toolName()
+			+ " id=" + callId
+			+ " args=" + (update.argumentsJson() != null ? update.argumentsJson().length() + " chars" : "null")
+			+ " output=" + (update.outputJson() != null ? update.outputJson().length() + " chars" : "null")
+			+ " error=" + (update.errorMessage() != null ? "yes" : "no"));
+
 		ToolCallMessage message = registry.computeIfAbsent(callId,
-			key -> chatMessages.addToolCallMessage(update.toolName(), arguments));
+			key -> chatMessages.addToolCallMessage(update.toolName(), arguments,
+				update.intentionSummary()));
+
+		if (StringUtils.hasText(update.intentionSummary())) {
+			message.setIntentionSummary(update.intentionSummary());
+		}
 
 		switch (update.state()) {
 			case INVOKED -> message.setState(ToolCallState.INVOKED);
 			case IN_PROGRESS -> message.setState(ToolCallState.IN_PROGRESS);
 			case COMPLETED -> {
-				if (StringUtils.hasText(update.outputJson())) {
-					message.setOutputJson(update.outputJson());
+				String output = update.outputJson();
+				if (output != null && !output.isEmpty()) {
+					message.setOutputJson(output);
 				}
 				message.setState(ToolCallState.COMPLETED);
 				registry.remove(callId);
 			}
 			case FAILED -> {
-				if (StringUtils.hasText(update.outputJson())) {
-					message.setOutputJson(update.outputJson());
+				String output = update.outputJson();
+				if (output != null && !output.isEmpty()) {
+					message.setOutputJson(output);
 				}
 				if (StringUtils.hasText(update.errorMessage())) {
 					message.setErrorMessage(update.errorMessage());
@@ -417,5 +615,107 @@ public class CopilotProvider extends ComponentProvider {
 
 	private String providerIdentifier() {
 		return providerId != null ? providerId : "unknown";
+	}
+
+	// ── Session persistence ──────────────────────────────────────────────
+
+	private void ensureCurrentSession() {
+		if (currentSession == null) {
+			String progName = null;
+			if (programPlugin != null && programPlugin.getCurrentProgram() != null) {
+				progName = programPlugin.getCurrentProgram().getName();
+			}
+			ModelEntry model = chatInput.getSelectedModel();
+			String modelId = model != null ? model.identifier() : null;
+			currentSession = new ghidracopilot.ai.session.ChatSession(
+				providerIdentifier(), modelId, progName);
+		}
+	}
+
+	private void saveCurrentSession() {
+		if (currentSession == null || messageHistory.isEmpty()) {
+			return;
+		}
+		currentSession.setMessages(new ArrayList<>(messageHistory));
+		currentSession.setProviderId(providerIdentifier());
+		ModelEntry model = chatInput.getSelectedModel();
+		if (model != null) {
+			currentSession.setModelId(model.identifier());
+		}
+		ghidracopilot.ai.session.SessionStorage.save(currentSession);
+	}
+
+	private void loadSession(String sessionId) {
+		ghidracopilot.ai.session.ChatSession session =
+			ghidracopilot.ai.session.SessionStorage.load(sessionId);
+		if (session == null) {
+			chatMessages.addSystemMessage("Failed to load session.");
+			return;
+		}
+		chatMessages.clearMessages();
+		messageHistory.clear();
+		currentSession = session;
+
+		for (ChatMessage msg : session.getMessages()) {
+			switch (msg.role()) {
+				case USER -> chatMessages.addUserMessage(msg.content());
+				case ASSISTANT -> chatMessages.addAssistantMessage(msg.content());
+				case SYSTEM -> chatMessages.addSystemMessage(msg.content());
+			}
+			messageHistory.add(msg);
+		}
+		chatMessages.addSystemMessage("Restored session from " + formatTime(session.getUpdatedAt()));
+	}
+
+	private void showSessionList() {
+		List<ghidracopilot.ai.session.SessionStorage.SessionSummary> sessions =
+			ghidracopilot.ai.session.SessionStorage.listSessions();
+
+		if (sessions.isEmpty()) {
+			chatMessages.addSystemMessage("No saved sessions.");
+			return;
+		}
+
+		javax.swing.JPopupMenu popup = new javax.swing.JPopupMenu();
+		int shown = 0;
+		for (var summary : sessions) {
+			if (shown >= 20) break;
+			// Skip the current session
+			if (currentSession != null && summary.id().equals(currentSession.getId())) {
+				continue;
+			}
+			String label = truncateTitle(summary.title(), 40)
+				+ "  (" + formatTime(summary.updatedAt()) + ")";
+			javax.swing.JMenuItem item = new javax.swing.JMenuItem(label);
+			item.addActionListener(e -> loadSession(summary.id()));
+			popup.add(item);
+			shown++;
+		}
+
+		if (shown == 0) {
+			chatMessages.addSystemMessage("No other saved sessions.");
+			return;
+		}
+
+		// Show popup below the toolbar
+		java.awt.Component comp = panel;
+		popup.show(comp, 0, 0);
+	}
+
+	private static String truncateTitle(String title, int max) {
+		if (title == null) return "Untitled";
+		if (title.length() <= max) return title;
+		return title.substring(0, max - 3) + "...";
+	}
+
+	private static String formatTime(long epochMillis) {
+		java.time.LocalDateTime dt = java.time.Instant.ofEpochMilli(epochMillis)
+			.atZone(java.time.ZoneId.systemDefault())
+			.toLocalDateTime();
+		java.time.LocalDate today = java.time.LocalDate.now();
+		if (dt.toLocalDate().equals(today)) {
+			return dt.format(java.time.format.DateTimeFormatter.ofPattern("h:mm a"));
+		}
+		return dt.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, h:mm a"));
 	}
 }

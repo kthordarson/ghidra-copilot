@@ -30,7 +30,7 @@ import ghidra.util.exception.CancelledException;
 /**
  * Tools to define a struct and apply it to memory or stack variables.
  */
-final class StructureTool {
+final class StructureTool implements MutationTool {
 
 	private final CopilotToolContext context;
 

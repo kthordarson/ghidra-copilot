@@ -18,7 +18,7 @@ import ghidra.util.exception.InvalidInputException;
 /**
  * Tools for annotating the current program with comments, labels, and bookmarks.
  */
-final class AnnotationTool {
+final class AnnotationTool implements MutationTool {
 
 	private final CopilotToolContext context;
 

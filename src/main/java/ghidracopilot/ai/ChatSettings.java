@@ -23,6 +23,8 @@ public final class ChatSettings {
 	private final String ollamaBaseUrl;
 	private final String ollamaModel;
 
+	private final String copilotModel;
+
 	private ChatSettings(Builder builder) {
 		this.provider = builder.provider;
 		this.systemPrompt = builder.systemPrompt;
@@ -37,6 +39,7 @@ public final class ChatSettings {
 		this.anthropicModel = builder.anthropicModel;
 		this.ollamaBaseUrl = builder.ollamaBaseUrl;
 		this.ollamaModel = builder.ollamaModel;
+		this.copilotModel = builder.copilotModel;
 	}
 
 	public AiProvider provider() {
@@ -91,6 +94,10 @@ public final class ChatSettings {
 		return ollamaModel;
 	}
 
+	public String copilotModel() {
+		return copilotModel;
+	}
+
 	public static Builder builder() {
 		return new Builder();
 	}
@@ -114,6 +121,8 @@ public final class ChatSettings {
 
 		private String ollamaBaseUrl;
 		private String ollamaModel;
+
+		private String copilotModel;
 
 		private Builder() {
 			// use builder()
@@ -183,6 +192,11 @@ public final class ChatSettings {
 
 		public Builder ollamaModel(String ollamaModel) {
 			this.ollamaModel = ollamaModel;
+			return this;
+		}
+
+		public Builder copilotModel(String copilotModel) {
+			this.copilotModel = copilotModel;
 			return this;
 		}
 
