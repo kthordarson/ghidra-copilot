@@ -26,12 +26,11 @@ import javax.swing.SwingUtilities;
 import docking.ActionContext;
 import docking.action.DockingAction;
 import docking.action.MenuData;
-import ghidra.app.ExamplesPluginPackage;
+import ghidracopilot.CopilotPluginPackage;
 import ghidra.app.context.ListingActionContext;
 import ghidra.app.decompiler.DecompInterface;
 import ghidra.app.decompiler.DecompileResults;
 import ghidra.app.decompiler.DecompilerLocation;
-import ghidra.app.plugin.PluginCategoryNames;
 import ghidra.app.plugin.ProgramPlugin;
 import ghidra.app.plugin.core.decompile.DecompilerActionContext;
 import ghidra.program.model.address.Address;
@@ -72,7 +71,7 @@ import ghidra.util.HelpLocation;
 import ghidra.util.Msg;
 import ghidra.util.task.TaskMonitorAdapter;
 import ghidracopilot.ai.AiProvider;
-import ghidracopilot.ai.InteractionMode;
+import ghidracopilot.ai.PermissionManager;
 import ghidracopilot.ai.ChatSettings;
 import ghidracopilot.ai.SpringAiChatServiceFactory;
 import ghidracopilot.ai.tools.CopilotToolRegistry;
@@ -89,8 +88,8 @@ import org.springframework.util.StringUtils;
 //@formatter:off
 @PluginInfo(
 	status = PluginStatus.STABLE,
-	packageName = ExamplesPluginPackage.NAME,
-	category = PluginCategoryNames.EXAMPLES,
+	packageName = CopilotPluginPackage.NAME,
+	category = "AI",
 	shortDescription = "Ghidra Copilot Chat",
 	description = "Copilot to help with reverse engineering tasks."
 )
@@ -133,6 +132,8 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 	provider.setVisible(true);
 
 	CopilotToolRegistry.configureForPlugin(this);
+	CopilotToolRegistry.setPermissionManager(provider.permissionManager());
+	provider.wireIntentTool();
 
 	String topicName = this.getClass().getPackage().getName();
 	String anchorName = "HelpAnchor";
@@ -444,7 +445,7 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		}
 		tool.showComponentProvider(provider, true);
 		provider.toFront();
-		provider.sendPrompt(prompt, null, preface);
+		provider.sendPrompt(prompt, preface);
 	}
 
 	private String buildListingSelectionSnippet(Program program, ProgramSelection selection, Address pivot,
@@ -932,18 +933,44 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 				.anthropicApiKey(toolOptions.getString(OPTION_ANTHROPIC_API_KEY, ""))
 				.anthropicModel(toolOptions.getString(OPTION_ANTHROPIC_MODEL, DEFAULT_ANTHROPIC_MODEL))
 				.ollamaBaseUrl(toolOptions.getString(OPTION_OLLAMA_BASE_URL, DEFAULT_OLLAMA_BASE_URL))
-				.ollamaModel(toolOptions.getString(OPTION_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL));
+				.ollamaModel(toolOptions.getString(OPTION_OLLAMA_MODEL, DEFAULT_OLLAMA_MODEL))
+				.copilotModel(toolOptions.getString(CopilotOptions.OPTION_COPILOT_MODEL, CopilotOptions.DEFAULT_COPILOT_MODEL));
 
 		return builder.build();
 	}
 
 	private void refreshModelRegistry(ChatSettings settings) {
 		List<ModelEntry> entries = new ArrayList<>();
-		addModel(entries, AiProvider.OPENAI, trimToNull(settings.openAiModel()), settings.openAiModel());
-		addModel(entries, AiProvider.AZURE_OPENAI, trimToNull(settings.azureDeployment()),
-			StringUtils.hasText(settings.azureModel()) ? settings.azureModel().trim() : settings.azureDeployment());
-		addModel(entries, AiProvider.ANTHROPIC, trimToNull(settings.anthropicModel()), settings.anthropicModel());
-		addModel(entries, AiProvider.OLLAMA, trimToNull(settings.ollamaModel()), settings.ollamaModel());
+		AiProvider activeProvider = settings.provider() != null ? settings.provider() : AiProvider.OPENAI;
+
+		switch (activeProvider) {
+			case OPENAI ->
+				addModel(entries, AiProvider.OPENAI, trimToNull(settings.openAiModel()), settings.openAiModel());
+			case AZURE_OPENAI ->
+				addModel(entries, AiProvider.AZURE_OPENAI, trimToNull(settings.azureDeployment()),
+					StringUtils.hasText(settings.azureModel()) ? settings.azureModel().trim() : settings.azureDeployment());
+			case ANTHROPIC ->
+				addModel(entries, AiProvider.ANTHROPIC, trimToNull(settings.anthropicModel()), settings.anthropicModel());
+			case OLLAMA ->
+				addModel(entries, AiProvider.OLLAMA, trimToNull(settings.ollamaModel()), settings.ollamaModel());
+			case GITHUB_COPILOT -> {
+				try {
+					var tokenProvider = new ghidracopilot.ai.CopilotTokenProvider();
+					var models = tokenProvider.fetchAvailableModels();
+					for (var model : models) {
+						entries.add(new ModelEntry(AiProvider.GITHUB_COPILOT, model.id(), model.displayLabel()));
+					}
+				}
+				catch (Exception ex) {
+					Msg.warn(this, "Failed to fetch Copilot models: " + ex.getMessage());
+				}
+				// Ensure the configured model is always present
+				String configured = trimToNull(settings.copilotModel());
+				if (configured != null && entries.stream().noneMatch(e -> e.identifier().equals(configured))) {
+					entries.add(0, new ModelEntry(AiProvider.GITHUB_COPILOT, configured, configured));
+				}
+			}
+		}
 
 		ModelRegistry.replaceAll(entries);
 		ModelRegistry.setDefaultModelKey(determineDefaultModelKey(settings, entries));
@@ -968,6 +995,7 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 			case AZURE_OPENAI -> trimToNull(settings.azureDeployment());
 			case ANTHROPIC -> trimToNull(settings.anthropicModel());
 			case OLLAMA -> trimToNull(settings.ollamaModel());
+			case GITHUB_COPILOT -> trimToNull(settings.copilotModel());
 		};
 		if (!StringUtils.hasText(identifier)) {
 			return entries.stream()

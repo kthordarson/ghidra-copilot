@@ -13,7 +13,7 @@ import ghidra.program.model.mem.MemoryAccessException;
 /**
  * Tools for inspecting and patching bytes within the current program.
  */
-final class PatchTool {
+final class PatchTool implements MutationTool {
 
 	private static final int MAX_PATCH_LENGTH = 1024;
 

@@ -16,46 +16,172 @@
 package ghidracopilot.ui.components;
 
 import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Insets;
+import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.Font;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.KeyEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
 
+import javax.swing.AbstractAction;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
+import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
-import javax.swing.JTextField;
+import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
+import javax.swing.KeyStroke;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
+import ghidracopilot.ai.PermissionManager;
 import ghidracopilot.model.ModelRegistry.ModelEntry;
-import ghidracopilot.ai.InteractionMode;
 
 /**
  * Input area for composing chat requests to Copilot.
  */
 public class ChatInput extends JPanel {
 
-	private final JTextField promptField;
+	private static final int MIN_ROWS = 1;
+	private static final int MAX_ROWS = 5;
+	private static final String CARD_PROMPT = "prompt";
+	private static final String CARD_PERMISSION = "permission";
+
+	private final JTextArea promptField;
+	private final JScrollPane promptScroll;
 	private final JButton sendButton;
 	private final JComboBox<ModelItem> modelCombo;
 	private final ModelComboBoxModel modelComboModel;
-	private final JComboBox<InteractionMode> modeCombo;
+	private final JLabel usageLabel;
+	private final CardLayout cardLayout;
+	private final JPanel cardPanel;
+	private final JPanel promptCard;
 	private boolean requestInProgress;
 	private boolean sendEnabled = true;
 	private ActionListener sendAction;
 	private ActionListener stopAction;
 
+	private final List<String> promptHistory = new ArrayList<>();
+	private int historyIndex = -1;
+	private String draftText = "";
+	private static final int MAX_HISTORY = 200;
+
+	// Permission prompt state
+	private JPanel permissionCard;
+	private CompletableFuture<PermissionManager.Decision> pendingDecision;
+	private int selectedOption;
+	private List<PermissionOption> permissionOptions;
+
 	public ChatInput() {
 		super(new BorderLayout());
-		setBorder(new EmptyBorder(8, 10, 10, 10));
+		setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createMatteBorder(1, 0, 0, 0,
+				ghidracopilot.ui.CopilotTheme.codeBorder()),
+			new EmptyBorder(8, 10, 10, 10)));
 
-		promptField = new JTextField();
+		promptField = new JTextArea(MIN_ROWS, 0);
+		promptField.setLineWrap(true);
+		promptField.setWrapStyleWord(true);
+
+		promptScroll = new JScrollPane(promptField);
+		promptScroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
+		promptScroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
+		promptScroll.setBorder(BorderFactory.createEmptyBorder());
+
+		// Enter sends the message; Shift+Enter inserts a newline
+		promptField.getInputMap().put(
+			KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "send-message");
+		promptField.getInputMap().put(
+			KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, java.awt.event.InputEvent.SHIFT_DOWN_MASK),
+			"insert-break");
+		promptField.getActionMap().put("send-message", new AbstractAction() {
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (sendAction != null && sendEnabled && !requestInProgress) {
+					sendAction.actionPerformed(e);
+				}
+			}
+		});
+
+		// Escape cancels the active request
+		promptField.getInputMap().put(
+			KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "cancel-request");
+		promptField.getActionMap().put("cancel-request", new AbstractAction() {
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (requestInProgress && stopAction != null) {
+					stopAction.actionPerformed(e);
+				}
+			}
+		});
+
+		// Up arrow recalls previous prompt (only when field is empty or at start)
+		promptField.getInputMap().put(
+			KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "history-up");
+		promptField.getActionMap().put("history-up", new AbstractAction() {
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (promptHistory.isEmpty()) return;
+				if (promptField.getCaretPosition() > 0) return;
+				if (historyIndex < 0) {
+					draftText = promptField.getText();
+					historyIndex = promptHistory.size() - 1;
+				}
+				else if (historyIndex > 0) {
+					historyIndex--;
+				}
+				promptField.setText(promptHistory.get(historyIndex));
+				promptField.setCaretPosition(0);
+			}
+		});
+
+		// Down arrow goes forward in history
+		promptField.getInputMap().put(
+			KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "history-down");
+		promptField.getActionMap().put("history-down", new AbstractAction() {
+			@Override
+			public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (historyIndex < 0) return;
+				if (historyIndex < promptHistory.size() - 1) {
+					historyIndex++;
+					promptField.setText(promptHistory.get(historyIndex));
+				}
+				else {
+					historyIndex = -1;
+					promptField.setText(draftText);
+				}
+			}
+		});
+
+		// Auto-grow the text area as the user types
+		promptField.getDocument().addDocumentListener(new DocumentListener() {
+			@Override public void insertUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+			@Override public void removeUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+			@Override public void changedUpdate(DocumentEvent e) { scheduleAdjustHeight(); }
+		});
+		promptScroll.getViewport().addComponentListener(new ComponentAdapter() {
+			@Override
+			public void componentResized(ComponentEvent e) {
+				scheduleAdjustHeight();
+			}
+		});
+
 		sendButton = new JButton("Send");
 		modelComboModel = new ModelComboBoxModel();
 		modelCombo = new JComboBox<>(modelComboModel);
@@ -63,27 +189,231 @@ public class ChatInput extends JPanel {
 		modelCombo.setPrototypeDisplayValue(ModelItem.prototype());
 		modelCombo.putClientProperty("JComboBox.isTableCellEditor", Boolean.TRUE);
 
-		modeCombo = new JComboBox<>(InteractionMode.values());
-		modeCombo.setPrototypeDisplayValue(InteractionMode.AGENT);
-		modeCombo.setSelectedItem(InteractionMode.ASK);
-
 		JPanel promptRow = new JPanel(new BorderLayout(8, 0));
-		promptRow.add(promptField, BorderLayout.CENTER);
+		promptRow.setOpaque(false);
+		promptRow.add(promptScroll, BorderLayout.CENTER);
 		promptRow.add(sendButton, BorderLayout.EAST);
 
-		JPanel controlsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-		controlsRow.add(modelCombo);
-		controlsRow.add(modeCombo);
+		JPanel controlsRow = new JPanel(new BorderLayout());
+		controlsRow.setOpaque(false);
+		JPanel leftControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+		leftControls.setOpaque(false);
+		leftControls.add(modelCombo);
+		usageLabel = new JLabel("");
+		usageLabel.setForeground(ghidracopilot.ui.CopilotTheme.systemText());
+		usageLabel.setFont(usageLabel.getFont().deriveFont(usageLabel.getFont().getSize2D() - 1f));
+		controlsRow.add(leftControls, BorderLayout.WEST);
+		controlsRow.add(usageLabel, BorderLayout.EAST);
 		controlsRow.setBorder(BorderFactory.createEmptyBorder(6, 0, 0, 0));
 
-		JPanel stack = new JPanel();
-		stack.setLayout(new BoxLayout(stack, BoxLayout.Y_AXIS));
-		stack.setOpaque(false);
-		stack.add(promptRow);
-		stack.add(Box.createVerticalStrut(0));
-		stack.add(controlsRow);
+		promptCard = new JPanel();
+		promptCard.setLayout(new BoxLayout(promptCard, BoxLayout.Y_AXIS));
+		promptCard.setOpaque(false);
+		promptCard.add(promptRow);
+		promptCard.add(Box.createVerticalStrut(0));
+		promptCard.add(controlsRow);
 
-		add(stack, BorderLayout.CENTER);
+		cardLayout = new CardLayout();
+		cardPanel = new JPanel(cardLayout);
+		cardPanel.setOpaque(false);
+		cardPanel.add(promptCard, CARD_PROMPT);
+
+		add(cardPanel, BorderLayout.CENTER);
+
+		// Load persisted prompt history
+		try {
+			promptHistory.addAll(
+				ghidracopilot.ai.session.SessionStorage.loadPromptHistory());
+		}
+		catch (Exception ignored) {}
+
+		scheduleAdjustHeight();
+	}
+
+	// ---- Permission prompt ----
+
+	/**
+	 * Show a permission prompt that replaces the chat input.
+	 * The user picks an option with up/down + enter or click.
+	 * Returns a future that completes with their decision.
+	 */
+	public CompletableFuture<PermissionManager.Decision> showPermissionPrompt(
+			String toolName, String description) {
+		if (pendingDecision != null && !pendingDecision.isDone()) {
+			pendingDecision.complete(PermissionManager.Decision.DENY);
+		}
+
+		pendingDecision = new CompletableFuture<>();
+		selectedOption = 0;
+		permissionOptions = List.of(
+			new PermissionOption("Allow once", PermissionManager.Decision.ALLOW_ONCE),
+			new PermissionOption("Always allow " + toolName, PermissionManager.Decision.ALLOW_TOOL),
+			new PermissionOption("Allow all write operations", PermissionManager.Decision.ALLOW_ALL),
+			new PermissionOption("Deny", PermissionManager.Decision.DENY)
+		);
+
+		// Build permission panel
+		if (permissionCard != null) {
+			cardPanel.remove(permissionCard);
+		}
+		permissionCard = buildPermissionPanel(toolName, description);
+		cardPanel.add(permissionCard, CARD_PERMISSION);
+		cardLayout.show(cardPanel, CARD_PERMISSION);
+		permissionCard.requestFocusInWindow();
+		revalidate();
+		repaint();
+
+		pendingDecision.whenComplete((d, ex) -> {
+			javax.swing.SwingUtilities.invokeLater(() -> {
+				cardLayout.show(cardPanel, CARD_PROMPT);
+				promptField.requestFocusInWindow();
+				revalidate();
+				repaint();
+			});
+		});
+
+		return pendingDecision;
+	}
+
+	private JPanel buildPermissionPanel(String toolName, String description) {
+		JPanel panel = new JPanel(new BorderLayout(0, 8));
+		panel.setOpaque(false);
+
+		// Header: what the tool wants to do
+		String headerText = description != null && !description.isBlank()
+			? description
+			: toolName + " requires write permission";
+		JLabel header = new JLabel("\u25CF " + headerText);
+		header.setForeground(ghidracopilot.ui.CopilotTheme.stateInProgress());
+		header.setFont(header.getFont().deriveFont(Font.BOLD));
+		panel.add(header, BorderLayout.NORTH);
+
+		// Options list
+		JPanel optionsPanel = new JPanel();
+		optionsPanel.setLayout(new BoxLayout(optionsPanel, BoxLayout.Y_AXIS));
+		optionsPanel.setOpaque(false);
+		optionsPanel.setBorder(new EmptyBorder(0, 4, 0, 0));
+
+		List<JLabel> optionLabels = new ArrayList<>();
+		for (int i = 0; i < permissionOptions.size(); i++) {
+			PermissionOption opt = permissionOptions.get(i);
+			JLabel label = new JLabel((i == selectedOption ? "❯ " : "  ") + opt.label);
+			label.setForeground(i == selectedOption
+				? ghidracopilot.ui.CopilotTheme.chevronColor()
+				: ghidracopilot.ui.CopilotTheme.assistantText());
+			label.setFont(label.getFont().deriveFont(
+				i == selectedOption ? Font.BOLD : Font.PLAIN));
+			label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+			label.setBorder(new EmptyBorder(2, 0, 2, 0));
+
+			final int idx = i;
+			label.addMouseListener(new java.awt.event.MouseAdapter() {
+				@Override
+				public void mouseClicked(java.awt.event.MouseEvent e) {
+					completePermission(permissionOptions.get(idx).decision);
+				}
+			});
+			optionLabels.add(label);
+			optionsPanel.add(label);
+		}
+		panel.add(optionsPanel, BorderLayout.CENTER);
+
+		// Key bindings on the panel itself
+		panel.setFocusable(true);
+		panel.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+			.put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "perm-up");
+		panel.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+			.put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "perm-down");
+		panel.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+			.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "perm-select");
+		panel.getInputMap(javax.swing.JComponent.WHEN_IN_FOCUSED_WINDOW)
+			.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "perm-deny");
+
+		panel.getActionMap().put("perm-up", new AbstractAction() {
+			@Override public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (selectedOption > 0) {
+					selectedOption--;
+					updateOptionHighlights(optionLabels);
+				}
+			}
+		});
+		panel.getActionMap().put("perm-down", new AbstractAction() {
+			@Override public void actionPerformed(java.awt.event.ActionEvent e) {
+				if (selectedOption < permissionOptions.size() - 1) {
+					selectedOption++;
+					updateOptionHighlights(optionLabels);
+				}
+			}
+		});
+		panel.getActionMap().put("perm-select", new AbstractAction() {
+			@Override public void actionPerformed(java.awt.event.ActionEvent e) {
+				completePermission(permissionOptions.get(selectedOption).decision);
+			}
+		});
+		panel.getActionMap().put("perm-deny", new AbstractAction() {
+			@Override public void actionPerformed(java.awt.event.ActionEvent e) {
+				completePermission(PermissionManager.Decision.DENY);
+			}
+		});
+
+		return panel;
+	}
+
+	private void updateOptionHighlights(List<JLabel> labels) {
+		for (int i = 0; i < labels.size(); i++) {
+			JLabel lbl = labels.get(i);
+			boolean selected = (i == selectedOption);
+			lbl.setText((selected ? "❯ " : "  ") + permissionOptions.get(i).label);
+			lbl.setForeground(selected
+				? ghidracopilot.ui.CopilotTheme.chevronColor()
+				: ghidracopilot.ui.CopilotTheme.assistantText());
+			lbl.setFont(lbl.getFont().deriveFont(selected ? Font.BOLD : Font.PLAIN));
+		}
+	}
+
+	private void completePermission(PermissionManager.Decision decision) {
+		CompletableFuture<PermissionManager.Decision> future = pendingDecision;
+		if (future != null && !future.isDone()) {
+			future.complete(decision);
+		}
+	}
+
+	private record PermissionOption(String label, PermissionManager.Decision decision) {}
+
+	// ---- Normal input methods ----
+
+	private void scheduleAdjustHeight() {
+		SwingUtilities.invokeLater(this::adjustHeight);
+	}
+
+	private void adjustHeight() {
+		int availableWidth = promptScroll.getViewport().getWidth();
+		if (availableWidth <= 0) {
+			availableWidth = promptScroll.getWidth();
+		}
+		if (availableWidth <= 0) {
+			return;
+		}
+
+		promptField.setSize(availableWidth, Short.MAX_VALUE);
+
+		int minHeight = heightForRows(MIN_ROWS);
+		int maxHeight = heightForRows(MAX_ROWS);
+		int targetHeight = Math.max(minHeight,
+			Math.min(promptField.getPreferredSize().height, maxHeight));
+
+		Dimension current = promptScroll.getPreferredSize();
+		if (current.height != targetHeight) {
+			promptScroll.setPreferredSize(new Dimension(current.width, targetHeight));
+			revalidate();
+			repaint();
+		}
+	}
+
+	private int heightForRows(int rows) {
+		int lineHeight = promptField.getFontMetrics(promptField.getFont()).getHeight();
+		Insets insets = promptField.getInsets();
+		return insets.top + insets.bottom + (lineHeight * rows);
 	}
 
 	public void addSendAction(ActionListener listener) {
@@ -92,7 +422,6 @@ public class ChatInput extends JPanel {
 		}
 		sendAction = listener;
 		sendButton.addActionListener(listener);
-		promptField.addActionListener(listener);
 	}
 
 	public void addStopAction(ActionListener listener) {
@@ -106,11 +435,6 @@ public class ChatInput extends JPanel {
 		return promptField.getText();
 	}
 
-	public InteractionMode getInteractionMode() {
-		Object selected = modeCombo.getSelectedItem();
-		return selected instanceof InteractionMode mode ? mode : InteractionMode.ASK;
-	}
-
 	public ModelEntry getSelectedModel() {
 		return modelComboModel.getSelectedEntry();
 	}
@@ -121,12 +445,45 @@ public class ChatInput extends JPanel {
 	}
 
 	public void clearPrompt() {
+		String text = promptField.getText().trim();
+		if (!text.isEmpty()) {
+			// Deduplicate: don't add if it's the same as the last entry
+			if (promptHistory.isEmpty() || !promptHistory.get(promptHistory.size() - 1).equals(text)) {
+				promptHistory.add(text);
+				// Trim to max
+				while (promptHistory.size() > MAX_HISTORY) {
+					promptHistory.remove(0);
+				}
+			}
+			// Persist to disk in background
+			List<String> snapshot = List.copyOf(promptHistory);
+			new Thread(() -> ghidracopilot.ai.session.SessionStorage.savePromptHistory(
+				new ArrayList<>(snapshot)), "copilot-history-save").start();
+		}
+		historyIndex = -1;
+		draftText = "";
 		promptField.setText("");
+		promptField.setCaretPosition(0);
+		promptScroll.setPreferredSize(
+			new Dimension(promptScroll.getPreferredSize().width, heightForRows(MIN_ROWS)));
+		revalidate();
+		repaint();
+		scheduleAdjustHeight();
+	}
+
+	/**
+	 * Update the token usage display in the controls row.
+	 */
+	public void updateUsage(int promptTokens, int completionTokens) {
+		int total = promptTokens + completionTokens;
+		String display = total >= 1000
+				? String.format("%.1fk tokens", total / 1000.0)
+				: total + " tokens";
+		usageLabel.setText(display);
 	}
 
 	public void setInputEnabled(boolean enabled) {
 		promptField.setEnabled(enabled);
-		modeCombo.setEnabled(enabled);
 		sendEnabled = enabled;
 		updateButtonState();
 		updateComboEnabledState();

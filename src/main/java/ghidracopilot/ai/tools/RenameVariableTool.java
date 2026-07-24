@@ -21,7 +21,7 @@ import ghidra.util.exception.InvalidInputException;
 /**
  * Tool to rename parameters or local stack variables within a function.
  */
-final class RenameVariableTool {
+final class RenameVariableTool implements MutationTool {
 
 	private final CopilotToolContext context;
 

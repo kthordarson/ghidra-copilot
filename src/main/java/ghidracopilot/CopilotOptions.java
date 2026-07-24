@@ -28,11 +28,14 @@ public final class CopilotOptions {
 	public static final String OPTION_OLLAMA_BASE_URL = "Ollama Base URL";
 	public static final String OPTION_OLLAMA_MODEL = "Ollama Model";
 
+	public static final String OPTION_COPILOT_MODEL = "GitHub Copilot Model";
+
 	public static final String DEFAULT_PROVIDER = AiProvider.OPENAI.id();
-	public static final String DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+	public static final String DEFAULT_OPENAI_MODEL = "gpt-4o";
 	public static final String DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
 	public static final String DEFAULT_OLLAMA_MODEL = "llama3.1";
-	public static final String DEFAULT_ANTHROPIC_MODEL = "claude-3-5-sonnet-latest";
+	public static final String DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514";
+	public static final String DEFAULT_COPILOT_MODEL = "claude-sonnet-4";
 
 	private CopilotOptions() {
 		// Utility class

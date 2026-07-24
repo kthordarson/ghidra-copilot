@@ -60,8 +60,7 @@ class SpringAiChatServiceTest {
 			null,
 			null,
 			List.of(),
-			updates::add,
-			InteractionMode.AGENT);
+			updates::add);
 
 		String finalResponse = chatService.chat(request);
 

@@ -16,7 +16,9 @@
 package ghidracopilot.ui.messages;
 
 import java.awt.Color;
+import java.awt.Component;
 import java.awt.Container;
+import java.awt.Dimension;
 import java.awt.Font;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -72,6 +74,20 @@ public final class MarkdownRenderer {
 		return buildComponent(renderedHtml, codeBlocks, textColor);
 	}
 
+	public static void refreshLayout(JComponent component) {
+		if (component instanceof RenderedMarkdownPanel panel) {
+			panel.refreshLayout();
+			return;
+		}
+		if (component instanceof Container container) {
+			for (Component child : container.getComponents()) {
+				if (child instanceof JComponent childComponent) {
+					refreshLayout(childComponent);
+				}
+			}
+		}
+	}
+
 	public static void applyFontStyle(JComponent component, int style) {
 		if (component == null) {
 			return;
@@ -103,9 +119,10 @@ public final class MarkdownRenderer {
 
 	private static JComponent buildComponent(String html, List<CodeBlockData> codeBlocks,
 			Color textColor) {
-		JPanel container = new JPanel();
+		RenderedMarkdownPanel container = new RenderedMarkdownPanel();
 		container.setLayout(new BoxLayout(container, BoxLayout.Y_AXIS));
 		container.setOpaque(false);
+		container.setAlignmentX(Component.LEFT_ALIGNMENT);
 
 		Matcher matcher = PLACEHOLDER_PATTERN.matcher(html);
 		int lastIndex = 0;
@@ -137,10 +154,10 @@ public final class MarkdownRenderer {
 
 		JEditorPane pane = createHtmlPane(trimmed, textColor);
 		container.add(pane);
-		container.add(Box.createVerticalStrut(4));
 	}
 
 	private static void addCodeBlock(JPanel container, CodeBlockData data) {
+		int codeFontSize = Math.max(defaultFontSize() - 1, 11);
 		RSyntaxTextArea textArea = new RSyntaxTextArea(data.literal()) {
 			@Override
 			public boolean getScrollableTracksViewportWidth() {
@@ -153,28 +170,99 @@ public final class MarkdownRenderer {
 		textArea.setCodeFoldingEnabled(false);
 		textArea.setLineWrap(true);
 		textArea.setWrapStyleWord(false);
-		textArea.setBorder(new EmptyBorder(6, 8, 6, 8));
-		textArea.setBackground(new Color(0xf7f9fb));
+		textArea.setHighlightCurrentLine(false);
+		textArea.setCaretPosition(0);
+		textArea.setFont(new Font(Font.MONOSPACED, Font.PLAIN, codeFontSize));
+		textArea.setBorder(new EmptyBorder(8, 10, 8, 10));
+		textArea.setBackground(ghidracopilot.ui.CopilotTheme.codeBackground());
+		textArea.setForeground(ghidracopilot.ui.CopilotTheme.toolText());
 
 		RTextScrollPane scrollPane = new RTextScrollPane(textArea);
-		scrollPane.setBorder(BorderFactory.createLineBorder(new Color(0xd0d7de)));
+		Color codeBg = ghidracopilot.ui.CopilotTheme.codeBackground();
+		scrollPane.setBorder(BorderFactory.createCompoundBorder(
+			BorderFactory.createLineBorder(ghidracopilot.ui.CopilotTheme.codeBorder(), 1, true),
+			BorderFactory.createEmptyBorder(0, 0, 0, 0)));
+		scrollPane.setLineNumbersEnabled(false);
 		scrollPane.setFoldIndicatorEnabled(false);
 		scrollPane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
 		scrollPane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-		scrollPane.setOpaque(false);
-		scrollPane.getViewport().setOpaque(false);
+		scrollPane.setAlignmentX(Component.LEFT_ALIGNMENT);
+		scrollPane.setBackground(codeBg);
+		scrollPane.getViewport().setBackground(codeBg);
+
+		// Hide the gutter entirely — it renders a beige strip even with line numbers off
+		org.fife.ui.rtextarea.Gutter gutter = scrollPane.getGutter();
+		if (gutter != null) {
+			gutter.setVisible(false);
+			gutter.setPreferredSize(new Dimension(0, 0));
+			gutter.setBackground(codeBg);
+		}
+
+		// Force all internal children to match the code background
+		for (java.awt.Component child : scrollPane.getComponents()) {
+			if (child instanceof javax.swing.JComponent jc) {
+				jc.setBackground(codeBg);
+				jc.setOpaque(true);
+			}
+		}
+
+		// Forward mouse wheel to parent unless user clicked inside the code block
+		final boolean[] focused = { false };
+		textArea.addMouseListener(new java.awt.event.MouseAdapter() {
+			@Override
+			public void mousePressed(java.awt.event.MouseEvent e) {
+				focused[0] = true;
+			}
+		});
+		textArea.addFocusListener(new java.awt.event.FocusAdapter() {
+			@Override
+			public void focusLost(java.awt.event.FocusEvent e) {
+				focused[0] = false;
+			}
+		});
+		scrollPane.setWheelScrollingEnabled(false);
+		scrollPane.addMouseWheelListener(e -> {
+			if (focused[0] && scrollPane.getVerticalScrollBar().isVisible()) {
+				scrollPane.setWheelScrollingEnabled(true);
+				scrollPane.dispatchEvent(e);
+				scrollPane.setWheelScrollingEnabled(false);
+			} else {
+				container.getParent().dispatchEvent(
+					javax.swing.SwingUtilities.convertMouseEvent(scrollPane, e, container.getParent()));
+			}
+		});
 
 		container.add(scrollPane);
 		container.add(Box.createVerticalStrut(8));
 	}
 
 	private static JEditorPane createHtmlPane(String html, Color textColor) {
-		JEditorPane pane = new JEditorPane();
+		JEditorPane pane = new JEditorPane() {
+			private int parentWidth() {
+				return getParent() != null ? getParent().getWidth() : 0;
+			}
+
+			@Override
+			public Dimension getPreferredSize() {
+				int width = parentWidth();
+				if (width > 0) {
+					// Size to the available width first so Swing's HTML view computes wrapped height.
+					setSize(width, Short.MAX_VALUE);
+				}
+				Dimension d = super.getPreferredSize();
+				if (width > 0) {
+					d.width = width;
+				}
+				return d;
+			}
+		};
 		HTMLEditorKit kit = new HTMLEditorKit();
 		StyleSheet styleSheet = kit.getStyleSheet();
 		styleSheet.addRule(buildBodyRule(textColor));
+		styleSheet.addRule("p { margin-top: 0; margin-bottom: 2px; }");
 		styleSheet.addRule("body, p, li, code, pre, table, td, th { word-break: break-word; overflow-wrap:anywhere; }");
 		styleSheet.addRule("pre, code { white-space: pre-wrap; word-wrap: break-word; overflow-wrap:anywhere; }");
+		styleSheet.addRule(buildInlineCodeRule());
 		styleSheet.addRule("table { table-layout: fixed; width: 100%; }");
 		styleSheet.addRule("img, table { max-width: 100%; }");
 		pane.setEditorKit(kit);
@@ -182,9 +270,45 @@ public final class MarkdownRenderer {
 		pane.setText("<html><body>" + html + "</body></html>");
 		pane.setEditable(false);
 		pane.setOpaque(false);
+		pane.setAlignmentX(Component.LEFT_ALIGNMENT);
 		pane.putClientProperty(JEditorPane.HONOR_DISPLAY_PROPERTIES, Boolean.TRUE);
-		pane.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
+		pane.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
 		return pane;
+	}
+
+	private static final class RenderedMarkdownPanel extends JPanel {
+
+		void refreshLayout() {
+			int width = getWidth();
+			if (width <= 0 && getParent() != null) {
+				width = getParent().getWidth();
+			}
+			if (width <= 0) {
+				return;
+			}
+
+			for (Component child : getComponents()) {
+				if (child instanceof JEditorPane pane) {
+					pane.setSize(width, Short.MAX_VALUE);
+					pane.revalidate();
+				}
+				else if (child instanceof RTextScrollPane scrollPane) {
+					scrollPane.setSize(width, scrollPane.getHeight());
+					Component view = scrollPane.getViewport().getView();
+					if (view instanceof RSyntaxTextArea textArea) {
+						int contentWidth = width - scrollPane.getInsets().left - scrollPane.getInsets().right;
+						if (contentWidth > 0) {
+							textArea.setSize(contentWidth, Short.MAX_VALUE);
+						}
+						textArea.revalidate();
+					}
+					scrollPane.revalidate();
+				}
+			}
+
+			revalidate();
+			repaint();
+		}
 	}
 
 	private static String buildBodyRule(Color textColor) {
@@ -192,7 +316,7 @@ public final class MarkdownRenderer {
 			.append(defaultFontFamily())
 			.append("'; font-size:")
 			.append(defaultFontSize())
-			.append("pt; line-height:1.35; word-wrap:break-word; overflow-wrap:anywhere; white-space:normal;");
+			.append("pt; line-height:1.5; word-wrap:break-word; overflow-wrap:anywhere; white-space:normal;");
 		if (textColor != null) {
 			builder.append(" color:#")
 				.append(String.format("%02x%02x%02x", textColor.getRed(), textColor.getGreen(), textColor.getBlue()))
@@ -200,6 +324,23 @@ public final class MarkdownRenderer {
 		}
 		builder.append(" word-break: break-word; overflow-wrap:anywhere; box-sizing:border-box; max-width:100%; }");
 		return builder.toString();
+	}
+
+	/**
+	 * CSS rule for inline {@code <code>} elements — gives them a distinct
+	 * background + monospace font so they stand out from prose.
+	 */
+	private static String buildInlineCodeRule() {
+		Color bg = ghidracopilot.ui.CopilotTheme.codeBackground();
+		Color border = ghidracopilot.ui.CopilotTheme.codeBorder();
+		return String.format(
+			"code { font-family: monospace; font-size: %dpt;"
+				+ " background-color: #%02x%02x%02x;"
+				+ " border: 1px solid #%02x%02x%02x;"
+				+ " padding: 1px 4px; }",
+			Math.max(defaultFontSize() - 1, 11),
+			bg.getRed(), bg.getGreen(), bg.getBlue(),
+			border.getRed(), border.getGreen(), border.getBlue());
 	}
 
 	private static void updateFont(JComponent component, int style) {
@@ -216,7 +357,8 @@ public final class MarkdownRenderer {
 
 	private static int defaultFontSize() {
 		Font font = UIManager.getFont("Label.font");
-		return font != null ? font.getSize() : 12;
+		int size = font != null ? font.getSize() : 13;
+		return Math.max(size, 13);
 	}
 
 	private static String resolveSyntax(String info) {

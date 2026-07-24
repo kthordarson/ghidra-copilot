@@ -20,7 +20,7 @@ import ghidra.util.task.TaskMonitor;
 /**
  * Tool to retype or otherwise update a function signature.
  */
-final class RetypeFunctionTool {
+final class RetypeFunctionTool implements MutationTool {
 
 	private final CopilotToolContext context;
 

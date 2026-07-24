@@ -15,16 +15,34 @@
  */
 package ghidracopilot.ui.messages;
 
-import java.awt.Color;
+import java.awt.BorderLayout;
+import java.awt.Font;
+
+import javax.swing.JLabel;
+import javax.swing.SwingConstants;
+import javax.swing.border.EmptyBorder;
+
+import ghidracopilot.ui.CopilotTheme;
 
 /**
- * Lightweight status message shown in the chat transcript (e.g., connection updates).
+ * Lightweight status message with a small dot prefix.
  */
 public class SystemMessage extends AbstractChatMessage {
 
-	private static final Color TEXT = new Color(0x5B6573);
-
 	public SystemMessage(String markdown) {
-		super(markdown, ChatAlignment.CENTER, null, null, TEXT, false);
+		super(markdown, CopilotTheme.systemText());
+
+		setLayout(new BorderLayout(6, 0));
+
+		JLabel dot = new JLabel("\u25CF");
+		dot.setForeground(CopilotTheme.systemText());
+		dot.setFont(dot.getFont().deriveFont(Font.BOLD, dot.getFont().getSize2D()));
+		dot.setVerticalAlignment(SwingConstants.TOP);
+		dot.setBorder(new EmptyBorder(3, 0, 0, 0));
+
+		add(dot, BorderLayout.WEST);
+		add(getContentPanel(), BorderLayout.CENTER);
+
+		MarkdownRenderer.applyFontStyle(getContentComponent(), Font.ITALIC);
 	}
 }

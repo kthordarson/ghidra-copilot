@@ -11,7 +11,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.lang.reflect.Method;
 
 import docking.ComponentProvider;
-import ghidracopilot.ai.InteractionMode;
 import ghidra.app.decompiler.ClangLine;
 import ghidra.app.decompiler.ClangToken;
 import ghidra.app.decompiler.ClangTokenGroup;
@@ -47,13 +46,17 @@ public final class ContextSnapshotBuilder {
 		// static helper
 	}
 
-	public static String build(ProgramPlugin programPlugin, InteractionMode mode) {
+	public static String build(ProgramPlugin programPlugin, Object unused) {
+		return build(programPlugin);
+	}
+
+	public static String build(ProgramPlugin programPlugin) {
 		if (programPlugin == null) {
-			return buildModeGuidance(mode);
+			return buildGuidance();
 		}
 		Program program = programPlugin.getCurrentProgram();
 		if (program == null) {
-			String guidance = buildModeGuidance(mode);
+			String guidance = buildGuidance();
 			return guidance != null
 					? "Current context: no program is active.\n\n" + guidance
 					: "Current context: no program is active.";
@@ -141,7 +144,7 @@ public final class ContextSnapshotBuilder {
 			}
 		}
 
-		String guidance = buildModeGuidance(mode);
+		String guidance = buildGuidance();
 		if (guidance != null) {
 			builder.append('\n').append('\n').append(guidance);
 		}
@@ -343,20 +346,13 @@ public final class ContextSnapshotBuilder {
 		return lines;
 	}
 
-	private static String buildModeGuidance(InteractionMode mode) {
-		if (mode == null) {
-			return null;
-		}
-		return switch (mode) {
-			case ASK -> """
-				Interaction mode: Ask (read-only).
-				Do not request or perform any actions that modify the project. Avoid renaming, patching, annotating, or otherwise changing program data. Use navigation, decompilation, and analysis only.
-				""".trim();
-			case AGENT -> """
-				Interaction mode: Agent (full autonomy).
-				Err on the side of autonomy: renaming functions/variables, adding comments, and reorganizing for clarity are the goal—do them without seeking confirmation unless you risk altering behavior. When asked to reverse code or mark up a routine, take the lead and apply the edits directly. Prefer focusing on the current function and the functions it directly calls or is called by; read additional functions only when needed for understanding.
-				""".trim();
-		};
+	private static String buildGuidance() {
+		return """
+			You have full access to all tools including those that modify the program.
+			Write operations (renaming, patching, annotating, retyping) require user permission before execution.
+			Err on the side of autonomy: when asked to reverse code or mark up a routine, take the lead and apply edits.
+			Prefer focusing on the current function and the functions it directly calls or is called by.
+			""".trim();
 	}
 
 	private record Snippet(String text, int highlightLine) {
