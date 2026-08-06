@@ -52,6 +52,7 @@ public final class SpringAiChatServiceFactory {
 	private static final String COPILOT_INTENT_SYSTEM_PROMPT = """
 			IMPORTANT: Keep the user informed about what you are doing by updating your current intent/status. \
 			Set an intent before starting a task, and update it whenever your focus changes. \
+			Provide a detailed explanation of the function's purpose, logic, and any relevant context. Write a better function signature with correct types and parameters. If the function is part of a larger system, explain how it fits into that system. \
 			Use short gerund-form phrases like "Decompiling function", "Analyzing call graph", "Renaming variables"."""
 			.strip();
 
