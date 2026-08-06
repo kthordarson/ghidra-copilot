@@ -397,6 +397,12 @@ public class CopilotProvider extends ComponentProvider {
 				chatInput.setRequestInProgress(false);
 				chatInput.setSendingEnabled(true);
 				intentStrip.setIdle();
+				if (streamingMessage[0] != null) {
+					streamingMessage[0].flush();
+				}
+				if (thinkingMessage[0] != null) {
+					thinkingMessage[0].flush();
+				}
 				if (isCancelled() || stopRequested) {
 					handleCancellation(userEntry);
 					return;

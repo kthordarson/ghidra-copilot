@@ -910,10 +910,57 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		}
 		ChatSettings settings = loadSettings();
 		refreshModelRegistry(settings);
+		applyModelCatalog();
+		provider.applyConfiguration(SpringAiChatServiceFactory.create(settings));
+		if (settings.provider() == AiProvider.GITHUB_COPILOT) {
+			refreshCopilotModelsAsync();
+		}
+	}
+
+	private void applyModelCatalog() {
 		List<ModelEntry> models = ModelRegistry.allModels();
 		String defaultModelKey = ModelRegistry.defaultModel().map(ModelEntry::key).orElse(null);
 		provider.updateModelCatalog(models, defaultModelKey);
-		provider.applyConfiguration(SpringAiChatServiceFactory.create(settings));
+	}
+
+	/**
+	 * Fetches the full GitHub Copilot model catalog (a {@code gh auth token}
+	 * subprocess call plus an HTTPS request) on a background thread, then
+	 * applies the result on the EDT. Must never run synchronously on the EDT.
+	 */
+	private void refreshCopilotModelsAsync() {
+		new Thread(() -> {
+			List<ModelEntry> fetched = new ArrayList<>();
+			try {
+				var tokenProvider = new ghidracopilot.ai.CopilotTokenProvider();
+				for (var model : tokenProvider.fetchAvailableModels()) {
+					fetched.add(new ModelEntry(AiProvider.GITHUB_COPILOT, model.id(), model.displayLabel()));
+				}
+			}
+			catch (Exception ex) {
+				Msg.warn(this, "Failed to fetch Copilot models: " + ex.getMessage());
+				return;
+			}
+			SwingUtilities.invokeLater(() -> applyFetchedCopilotModels(fetched));
+		}, "GhidraCopilot-CopilotModelFetch").start();
+	}
+
+	private void applyFetchedCopilotModels(List<ModelEntry> fetched) {
+		if (provider == null || toolOptions == null || fetched.isEmpty()) {
+			return;
+		}
+		ChatSettings settings = loadSettings();
+		if (settings.provider() != AiProvider.GITHUB_COPILOT) {
+			// Provider was switched away from Copilot while the fetch was in flight.
+			return;
+		}
+		String configured = trimToNull(settings.copilotModel());
+		if (configured != null && fetched.stream().noneMatch(e -> e.identifier().equals(configured))) {
+			fetched.add(0, new ModelEntry(AiProvider.GITHUB_COPILOT, configured, configured));
+		}
+		ModelRegistry.replaceAll(fetched);
+		ModelRegistry.setDefaultModelKey(determineDefaultModelKey(settings, fetched));
+		applyModelCatalog();
 	}
 
 	private ChatSettings loadSettings() {
@@ -954,20 +1001,13 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 			case OLLAMA ->
 				addModel(entries, AiProvider.OLLAMA, trimToNull(settings.ollamaModel()), settings.ollamaModel());
 			case GITHUB_COPILOT -> {
-				try {
-					var tokenProvider = new ghidracopilot.ai.CopilotTokenProvider();
-					var models = tokenProvider.fetchAvailableModels();
-					for (var model : models) {
-						entries.add(new ModelEntry(AiProvider.GITHUB_COPILOT, model.id(), model.displayLabel()));
-					}
-				}
-				catch (Exception ex) {
-					Msg.warn(this, "Failed to fetch Copilot models: " + ex.getMessage());
-				}
-				// Ensure the configured model is always present
+				// The full catalog is fetched asynchronously in refreshCopilotModelsAsync():
+				// fetching it here would run `gh auth token` + an HTTPS call synchronously
+				// on the EDT (this method is called from optionsChanged and from an
+				// invokeLater at startup) and could freeze Ghidra's UI for the duration.
 				String configured = trimToNull(settings.copilotModel());
-				if (configured != null && entries.stream().noneMatch(e -> e.identifier().equals(configured))) {
-					entries.add(0, new ModelEntry(AiProvider.GITHUB_COPILOT, configured, configured));
+				if (configured != null) {
+					entries.add(new ModelEntry(AiProvider.GITHUB_COPILOT, configured, configured));
 				}
 			}
 		}
