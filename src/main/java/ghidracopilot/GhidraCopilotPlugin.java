@@ -105,9 +105,6 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 	private static final int MAX_LISTING_SELECTION_LINES = 160;
 	private static final int LISTING_CONTEXT_BEFORE = 6;
 	private static final int LISTING_CONTEXT_AFTER = 12;
-	private static final int MAX_DECOMPILER_WINDOW_LINES = 160;
-	private static final int DECOMPILER_CONTEXT_BEFORE = 6;
-	private static final int DECOMPILER_CONTEXT_AFTER = 12;
 	private static final int MAX_SNIPPET_CHARS = 8000;
 
 	/**
