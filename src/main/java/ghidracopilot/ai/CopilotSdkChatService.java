@@ -20,7 +20,6 @@ import com.github.copilot.sdk.json.*;
 import ghidra.util.Msg;
 import ghidracopilot.ai.tools.CopilotToolRegistry;
 import ghidracopilot.ai.tools.IntentionSummariser;
-import ghidracopilot.ai.tools.MutationTool;
 import ghidracopilot.ai.tools.ReportIntentTool;
 import ghidracopilot.ai.tools.ToolResult;
 

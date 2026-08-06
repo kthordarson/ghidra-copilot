@@ -30,7 +30,6 @@ import org.springframework.util.StringUtils;
 
 import ghidracopilot.ai.tools.CopilotToolRegistry;
 import ghidracopilot.ai.tools.IntentionSummariser;
-import ghidracopilot.ai.tools.MutationTool;
 import ghidracopilot.ai.tools.ToolResult;
 
 /**

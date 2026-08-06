@@ -3,7 +3,6 @@ package ghidracopilot.ai;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
 
 /**
  * Manages per-session permission state for mutation tools.

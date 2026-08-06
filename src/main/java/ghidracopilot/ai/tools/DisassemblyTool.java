@@ -10,7 +10,6 @@ import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.util.CodeUnitInsertionException;
 
 /**
  * Tool for retrieving disassembly (listing) text for the current function.

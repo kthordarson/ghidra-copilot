@@ -27,7 +27,6 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.util.EnumMap;
-import java.util.List;
 import java.util.Map;
 
 import javax.swing.BorderFactory;
@@ -49,7 +48,6 @@ import ghidra.framework.options.ToolOptions;
 import ghidra.util.HelpLocation;
 import ghidracopilot.CopilotOptions;
 import ghidracopilot.ai.AiProvider;
-import ghidracopilot.ui.CopilotTheme;
 
 public class CopilotSettingsDialog extends DialogComponentProvider {
 
