@@ -196,7 +196,7 @@ public final class ContextSnapshotBuilder {
 				return null;
 			}
 			DecompileResults results = iface.decompileFunction(function, DECOMPILE_TIMEOUT_SECONDS,
-				TaskMonitorAdapter.DUMMY_MONITOR);
+				TaskMonitorAdapter.DUMMY);
 			if (results == null || !results.decompileCompleted()) {
 				return null;
 			}

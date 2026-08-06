@@ -12,7 +12,7 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Program;
-import ghidra.util.task.TaskMonitorAdapter;
+import ghidra.util.task.TaskMonitor;
 
 /**
  * Tools for exploring caller/callee relationships.
@@ -59,7 +59,7 @@ final class CallGraphTool {
 			List<String> lines = new ArrayList<>();
 			lines.add("Function: " + function.getName() + " @ " + context.formatAddress(function.getEntryPoint()));
 
-			Set<Function> callers = function.getCallingFunctions(TaskMonitorAdapter.DUMMY_MONITOR);
+			Set<Function> callers = function.getCallingFunctions(TaskMonitor.DUMMY);
 			List<Function> callerList = new ArrayList<>(callers);
 			callerList.sort(Comparator.comparing(Function::getEntryPoint));
 			lines.add("Callers (" + callerList.size() + "):");
@@ -76,7 +76,7 @@ final class CallGraphTool {
 				}
 			}
 
-			Set<Function> callees = function.getCalledFunctions(TaskMonitorAdapter.DUMMY_MONITOR);
+			Set<Function> callees = function.getCalledFunctions(TaskMonitor.DUMMY);
 			List<Function> calleeList = new ArrayList<>(callees);
 			calleeList.sort(Comparator.comparing(Function::getEntryPoint));
 			lines.add("Callees (" + calleeList.size() + "):");

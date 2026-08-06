@@ -63,7 +63,7 @@ final class DecompileTool {
 				return ToolResult.error("Decompiler refused program: " + decompiler.getLastMessage());
 			}
 			DecompileResults results = decompiler.decompileFunction(function, DECOMPILE_TIMEOUT_SECONDS,
-				TaskMonitorAdapter.DUMMY_MONITOR);
+				TaskMonitorAdapter.DUMMY);
 			if (!results.decompileCompleted()) {
 				return ToolResult.error("Decompilation failed: " + results.getErrorMessage());
 			}

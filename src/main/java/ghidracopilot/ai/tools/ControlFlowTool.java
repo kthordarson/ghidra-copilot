@@ -42,7 +42,7 @@ final class ControlFlowTool {
 
 		try {
 			BasicBlockModel model = new BasicBlockModel(program);
-			CodeBlock block = model.getCodeBlockAt(address, TaskMonitorAdapter.DUMMY_MONITOR);
+			CodeBlock block = model.getCodeBlockAt(address, TaskMonitorAdapter.DUMMY);
 			if (block == null) {
 				return ToolResult.error("No basic block found at " + context.formatAddress(address));
 			}
@@ -52,10 +52,10 @@ final class ControlFlowTool {
 			lines.add("Length: " + block.getNumAddresses() + " address(es)");
 
 			lines.add("Destinations:");
-			appendReferences(lines, "  ", block.getDestinations(TaskMonitorAdapter.DUMMY_MONITOR));
+			appendReferences(lines, "  ", block.getDestinations(TaskMonitorAdapter.DUMMY));
 
 			lines.add("Sources:");
-			appendReferences(lines, "  ", block.getSources(TaskMonitorAdapter.DUMMY_MONITOR));
+			appendReferences(lines, "  ", block.getSources(TaskMonitorAdapter.DUMMY));
 
 			return ToolResult.success("Control flow summary generated.", String.join("\n", lines));
 		}

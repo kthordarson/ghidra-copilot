@@ -619,7 +619,7 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 				return "";
 			}
 			DecompileResults results =
-				iface.decompileFunction(function, 30, TaskMonitorAdapter.DUMMY_MONITOR);
+				iface.decompileFunction(function, 30, TaskMonitorAdapter.DUMMY);
 			if (results != null && results.decompileCompleted()
 				&& results.getDecompiledFunction() != null) {
 				return results.getDecompiledFunction().getC();
