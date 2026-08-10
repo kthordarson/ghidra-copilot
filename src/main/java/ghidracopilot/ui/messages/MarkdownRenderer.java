@@ -238,6 +238,14 @@ public final class MarkdownRenderer {
 
 	private static JEditorPane createHtmlPane(String html, Color textColor) {
 		JEditorPane pane = new JEditorPane() {
+			// Laying out the HTML View tree on every getPreferredSize() call is
+			// expensive, and BoxLayout asks every sibling for its preferred size
+			// whenever *any* message in the transcript revalidates (e.g. on every
+			// throttled render tick of a streaming message). Cache by width so
+			// unchanged messages don't pay for a fresh HTML layout each tick.
+			private int cachedWidth = -1;
+			private Dimension cachedPreferred;
+
 			private int parentWidth() {
 				return getParent() != null ? getParent().getWidth() : 0;
 			}
@@ -245,6 +253,9 @@ public final class MarkdownRenderer {
 			@Override
 			public Dimension getPreferredSize() {
 				int width = parentWidth();
+				if (width > 0 && width == cachedWidth && cachedPreferred != null) {
+					return new Dimension(cachedPreferred);
+				}
 				if (width > 0) {
 					// Size to the available width first so Swing's HTML view computes wrapped height.
 					setSize(width, Short.MAX_VALUE);
@@ -252,6 +263,8 @@ public final class MarkdownRenderer {
 				Dimension d = super.getPreferredSize();
 				if (width > 0) {
 					d.width = width;
+					cachedWidth = width;
+					cachedPreferred = new Dimension(d);
 				}
 				return d;
 			}

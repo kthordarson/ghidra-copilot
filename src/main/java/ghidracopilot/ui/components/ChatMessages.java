@@ -15,12 +15,16 @@
  */
 package ghidracopilot.ui.components;
 
+import java.awt.AWTEvent;
 import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Rectangle;
+import java.awt.Toolkit;
+import java.awt.event.AWTEventListener;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.MouseEvent;
 
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -43,6 +47,36 @@ public class ChatMessages extends JPanel {
 
 	private final MessageListPanel messageList;
 	private final JScrollPane scrollPane;
+
+	/**
+	 * True while the user has a mouse button held down anywhere inside this
+	 * transcript (e.g. dragging a text selection). Autoscroll is suppressed
+	 * during this window so a streaming response can't yank the viewport out
+	 * from under an in-progress selection.
+	 *
+	 * <p>Registered as a global {@link AWTEventListener} rather than a normal
+	 * {@link java.awt.event.MouseListener} because mouse events are delivered
+	 * directly to the deepest component under the cursor (a code block's
+	 * {@code RSyntaxTextArea}, an html pane, etc.) and do not bubble up to
+	 * ancestors on their own.
+	 */
+	private boolean userInteracting;
+
+	private final AWTEventListener mouseInteractionListener = event -> {
+		if (!(event instanceof MouseEvent mouseEvent)) {
+			return;
+		}
+		Component source = mouseEvent.getComponent();
+		if (source == null || !SwingUtilities.isDescendingFrom(source, this)) {
+			return;
+		}
+		if (mouseEvent.getID() == MouseEvent.MOUSE_PRESSED) {
+			userInteracting = true;
+		}
+		else if (mouseEvent.getID() == MouseEvent.MOUSE_RELEASED) {
+			userInteracting = false;
+		}
+	};
 
 	public ChatMessages() {
 		super(new BorderLayout());
@@ -70,6 +104,18 @@ public class ChatMessages extends JPanel {
 		add(scrollPane, BorderLayout.CENTER);
 	}
 
+	@Override
+	public void addNotify() {
+		super.addNotify();
+		Toolkit.getDefaultToolkit().addAWTEventListener(mouseInteractionListener, AWTEvent.MOUSE_EVENT_MASK);
+	}
+
+	@Override
+	public void removeNotify() {
+		Toolkit.getDefaultToolkit().removeAWTEventListener(mouseInteractionListener);
+		super.removeNotify();
+	}
+
 	public void appendMessage(AbstractChatMessage message) {
 		int verticalGap = 8;
 		boolean wasAtBottom = isNearBottom();
@@ -86,9 +132,7 @@ public class ChatMessages extends JPanel {
 		messageList.repaint();
 		SwingUtilities.invokeLater(this::refreshMessageLayouts);
 
-		if (wasAtBottom) {
-			scrollToBottom();
-		}
+		maybeAutoScroll(wasAtBottom);
 	}
 
 	public void clearMessages() {
@@ -187,9 +231,7 @@ public class ChatMessages extends JPanel {
 		messageList.revalidate();
 		messageList.repaint();
 
-		if (wasAtBottom) {
-			scrollToBottom();
-		}
+		maybeAutoScroll(wasAtBottom);
 
 		return indicator;
 	}
@@ -245,7 +287,19 @@ public class ChatMessages extends JPanel {
 	 * pinned unless the user intentionally scrolled up.
 	 */
 	public void scrollIfAtBottom() {
-		if (isNearBottom()) {
+		if (!userInteracting && isNearBottom()) {
+			scrollToBottom();
+		}
+	}
+
+	/**
+	 * Scrolls to the bottom if {@code wasAtBottom}, unless the user currently
+	 * has a mouse button held down inside the transcript (e.g. dragging a
+	 * selection), in which case autoscroll is skipped so it can't yank the
+	 * viewport out from under them.
+	 */
+	private void maybeAutoScroll(boolean wasAtBottom) {
+		if (wasAtBottom && !userInteracting) {
 			scrollToBottom();
 		}
 	}

@@ -82,13 +82,17 @@ public abstract class AbstractChatMessage extends JPanel {
 		revalidateUpTree();
 	}
 
+	/**
+	 * Marks this message invalid so the layout hierarchy re-validates on the
+	 * next EDT pass. {@link #revalidate()} already propagates up to the
+	 * nearest validate root (the scroll pane's viewport) on its own — walking
+	 * the ancestor chain here and calling revalidate/repaint at every level
+	 * was redundant and, worse, triggered extra top-down layout passes over
+	 * the whole transcript on every streaming render tick.
+	 */
 	protected void revalidateUpTree() {
-		Container parent = this;
-		while (parent != null) {
-			parent.revalidate();
-			parent.repaint();
-			parent = parent.getParent();
-		}
+		revalidate();
+		repaint();
 	}
 
 	private void applyTextColor(Component component, Color color) {
