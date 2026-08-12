@@ -66,6 +66,10 @@ public final class SpringAiChatServiceFactory {
 		// Avoid JDK module access warnings/failures when Netty tries to reach jdk.internal.misc.Unsafe.
 		System.setProperty("io.netty.tryReflectionSetAccessible", "false");
 		System.setProperty("io.netty.noUnsafe", "true");
+		// Skip Netty's native OpenSSL (tcnative) probe: it isn't bundled with this extension, so the
+		// probe always fails with a noisy UnsatisfiedLinkError before falling back to the JDK SSL engine
+		// (which already handles TLS 1.3 + ALPN fine). Disabling it up front avoids that failed attempt.
+		System.setProperty("io.netty.handler.ssl.noOpenSsl", "true");
 	}
 
 	private SpringAiChatServiceFactory() {

@@ -93,8 +93,6 @@ dependencies {
 	implementation "org.commonmark:commonmark-ext-gfm-tables:0.22.0"
 	implementation "com.github:copilot-sdk-java:0.1.32-java.0"
 	implementation "com.fifesoft:rsyntaxtextarea:3.3.4"
-	// Provides the native OpenSSL binding for Netty so ALPN works without UnsatisfiedLinkError on Windows.
-	runtimeOnly "io.netty:netty-tcnative-boringssl-static:2.0.65.Final"
 
 	testImplementation "org.junit.jupiter:junit-jupiter:5.11.0"
 }
