@@ -86,7 +86,7 @@ public class IntentStrip extends JPanel {
 		if (intent == null || intent.isBlank()) {
 			return;
 		}
-		ghidra.util.Msg.debug(this, "[IntentStrip] setIntent: '" + intent.trim() + "'");
+		// ghidra.util.Msg.debug(this, "[IntentStrip] setIntent: '" + intent.trim() + "'");
 		currentText = intent.trim();
 		active = true;
 		iconFrame = 0;

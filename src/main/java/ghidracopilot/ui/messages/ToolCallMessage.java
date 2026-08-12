@@ -155,9 +155,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 		this.state = ToolCallState.INVOKED;
 		this.expanded = false;
 
-		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] CREATED"
-			+ ", args=" + (inputJson != null ? inputJson.length() + " chars" : "null")
-			+ ", argsPreview=" + truncateForLog(inputJson, 100));
+		// ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] CREATED" + ", args=" + (inputJson != null ? inputJson.length() + " chars" : "null") + ", argsPreview=" + truncateForLog(inputJson, 100));
 
 		Color text = CopilotTheme.toolText();
 		Color muted = CopilotTheme.systemText();
@@ -280,11 +278,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 		if (newState == null) {
 			return;
 		}
-		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setState: "
-			+ state + " → " + newState
-			+ ", hasOutput=" + (!outputJson.isEmpty())
-			+ ", hasError=" + (!errorMessage.isEmpty())
-			+ ", expandable=" + hasExpandableContent());
+		// ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setState: " + state + " → " + newState + ", hasOutput=" + (!outputJson.isEmpty()) + ", hasError=" + (!errorMessage.isEmpty()) + ", expandable=" + hasExpandableContent());
 		this.state = newState;
 		updateDisplay();
 	}
@@ -296,9 +290,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 	public void setOutputJson(String outputJson) {
 		this.outputJson = outputJson != null ? outputJson : "";
-		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setOutputJson called, "
-			+ "length=" + this.outputJson.length()
-			+ ", preview=" + truncate(this.outputJson, 120));
+		// ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setOutputJson called, " + "length=" + this.outputJson.length() + ", preview=" + truncate(this.outputJson, 120));
 		updateDetailArea();
 		updateCallout();
 		updateExpandability();
@@ -306,8 +298,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 	public void setErrorMessage(String errorMessage) {
 		this.errorMessage = errorMessage != null ? errorMessage : "";
-		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setErrorMessage called, "
-			+ "length=" + this.errorMessage.length());
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setErrorMessage called, " + "length=" + this.errorMessage.length());
 		updateDisplay();
 		updateExpandability();
 	}
@@ -416,9 +407,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 		}
 		else if (state == ToolCallState.COMPLETED && !outputJson.isEmpty()) {
 			String summary = buildResultSummary();
-			ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: "
-				+ "state=" + state + ", outputLen=" + outputJson.length()
-				+ ", summary=" + (summary != null ? "'" + summary + "'" : "null"));
+			// ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: " + "state=" + state + ", outputLen=" + outputJson.length() + ", summary=" + (summary != null ? "'" + summary + "'" : "null"));
 			if (summary != null && !summary.isEmpty()) {
 				calloutTextLabel.setText(summary);
 				calloutTextLabel.setForeground(CopilotTheme.systemText());
@@ -430,9 +419,9 @@ public class ToolCallMessage extends AbstractChatMessage {
 			}
 		}
 		else {
-			ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: "
-				+ "state=" + state + ", outputLen=" + outputJson.length()
-				+ ", errorLen=" + errorMessage.length() + " → hidden");
+			// ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] updateCallout: "
+			// 	+ "state=" + state + ", outputLen=" + outputJson.length()
+			// 	+ ", errorLen=" + errorMessage.length() + " → hidden");
 			calloutTextLabel.setText("");
 			calloutLine.setVisible(false);
 		}
