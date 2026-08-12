@@ -176,6 +176,7 @@ public class ChatMessages extends JPanel {
 	public ghidracopilot.ui.messages.AssistantMessage addAssistantMessage(String markdown) {
 		ghidracopilot.ui.messages.AssistantMessage message =
 			new ghidracopilot.ui.messages.AssistantMessage(markdown);
+		message.setOnContentChanged(this::scrollIfAtBottom);
 		appendMessage(message);
 		return message;
 	}
@@ -183,6 +184,7 @@ public class ChatMessages extends JPanel {
 	public ghidracopilot.ui.messages.AssistantMessage addThinkingContentMessage(String markdown) {
 		ghidracopilot.ui.messages.AssistantMessage message =
 			new ghidracopilot.ui.messages.AssistantMessage(markdown, true);
+		message.setOnContentChanged(this::scrollIfAtBottom);
 		appendMessage(message);
 		return message;
 	}

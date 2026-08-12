@@ -26,12 +26,8 @@ public class ReportIntentTool {
 			+ "Call this to keep the user informed about what you are doing. "
 			+ "Use short, gerund-form descriptions (e.g., 'Analyzing function', "
 			+ "'Renaming variables', 'Searching for references').")
-	public ToolResult reportIntent(
-			@ToolParam(description = "A short description of what you are currently doing, "
-				+ "4 words max, gerund form.")
-			String intent) {
-		ghidra.util.Msg.debug(this, "[ReportIntentTool] reportIntent called with: '"
-			+ intent + "', listener=" + (intentListener != null ? "SET" : "NULL"));
+	public ToolResult reportIntent(@ToolParam(description = "A short description of what you are currently doing, " + "4 words max, gerund form.") String intent) {
+		// ghidra.util.Msg.debug(this, "[ReportIntentTool] reportIntent called with: '" + intent + "', listener=" + (intentListener != null ? "SET" : "NULL"));
 		Consumer<String> listener = this.intentListener;
 		if (listener != null && intent != null && !intent.isBlank()) {
 			listener.accept(intent.trim());

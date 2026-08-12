@@ -324,7 +324,6 @@ public class CopilotProvider extends ComponentProvider {
 						}
 						streamingMessage[0].appendDelta(delta);
 						allAccumulatedText.append(delta);
-						chatMessages.scrollIfAtBottom();
 				});
 			}
 
@@ -335,7 +334,6 @@ public class CopilotProvider extends ComponentProvider {
 						thinkingMessage[0] = chatMessages.addThinkingContentMessage("");
 					}
 					thinkingMessage[0].appendDelta(delta);
-					chatMessages.scrollIfAtBottom();
 				});
 			}
 
@@ -343,7 +341,7 @@ public class CopilotProvider extends ComponentProvider {
 			public void onIntent(String intent) {
 				SwingUtilities.invokeLater(() -> {
 					if (intent != null && !intent.isBlank()) {
-						Msg.debug(this, "[CopilotProvider] onIntent callback: '" + intent.trim() + "'");
+						// Msg.debug(this, "[CopilotProvider] onIntent callback: '" + intent.trim() + "'");
 						intentStrip.setIntent(intent.trim());
 					}
 				});
@@ -529,11 +527,11 @@ public class CopilotProvider extends ComponentProvider {
 		String callId = update.id();
 		String arguments = StringUtils.hasText(update.argumentsJson()) ? update.argumentsJson() : "{}";
 
-		Msg.debug(this, "ToolCallUpdate [" + update.state() + "] " + update.toolName()
-			+ " id=" + callId
-			+ " args=" + (update.argumentsJson() != null ? update.argumentsJson().length() + " chars" : "null")
-			+ " output=" + (update.outputJson() != null ? update.outputJson().length() + " chars" : "null")
-			+ " error=" + (update.errorMessage() != null ? "yes" : "no"));
+		// Msg.debug(this, "ToolCallUpdate [" + update.state() + "] " + update.toolName()
+		// 	+ " id=" + callId
+		// 	+ " args=" + (update.argumentsJson() != null ? update.argumentsJson().length() + " chars" : "null")
+		// 	+ " output=" + (update.outputJson() != null ? update.outputJson().length() + " chars" : "null")
+		// 	+ " error=" + (update.errorMessage() != null ? "yes" : "no"));
 
 		ToolCallMessage message = registry.computeIfAbsent(callId,
 			key -> chatMessages.addToolCallMessage(update.toolName(), arguments,

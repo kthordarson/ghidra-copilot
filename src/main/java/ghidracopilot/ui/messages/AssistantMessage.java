@@ -41,6 +41,7 @@ public class AssistantMessage extends AbstractChatMessage {
 	private final StringBuilder accumulated = new StringBuilder();
 	private final Timer renderTimer;
 	private boolean dirty;
+	private Runnable onContentChanged;
 
 	public AssistantMessage(String markdown) {
 		this(markdown, false);
@@ -76,12 +77,30 @@ public class AssistantMessage extends AbstractChatMessage {
 			if (dirty) {
 				dirty = false;
 				setMarkdown(accumulated.toString());
+				notifyContentChanged();
 			}
 			else {
 				((Timer) e.getSource()).stop();
 			}
 		});
 		renderTimer.setInitialDelay(0);
+	}
+
+	/**
+	 * Registers a callback invoked once the layout growth from a render has
+	 * actually landed on the EDT. {@code setMarkdown} itself only revalidates
+	 * asynchronously, so a caller wanting to re-pin scroll position to this
+	 * message's growth must wait for that pass to complete first — see
+	 * {@link #notifyContentChanged()}.
+	 */
+	public void setOnContentChanged(Runnable onContentChanged) {
+		this.onContentChanged = onContentChanged;
+	}
+
+	private void notifyContentChanged() {
+		if (onContentChanged != null) {
+			javax.swing.SwingUtilities.invokeLater(onContentChanged);
+		}
 	}
 
 	/**
@@ -113,6 +132,7 @@ public class AssistantMessage extends AbstractChatMessage {
 		if (dirty) {
 			dirty = false;
 			setMarkdown(accumulated.toString());
+			notifyContentChanged();
 		}
 	}
 
