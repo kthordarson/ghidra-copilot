@@ -41,6 +41,7 @@ import javax.swing.border.EmptyBorder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import ghidra.util.Msg;
 import ghidracopilot.ai.tools.results.ListItemsResult;
 import ghidracopilot.ui.CopilotTheme;
 
@@ -449,12 +450,12 @@ public class ToolCallMessage extends AbstractChatMessage {
 			if (inputJson != null && !inputJson.isBlank()) {
 				try {
 					parsedArgs = MAPPER.readTree(inputJson);
-				} catch (Exception e1) {
+				} catch (Exception | LinkageError e1) {
 					// Spring AI often returns Map.toString() format: {key=val, key2=val2}
 					try {
 						String converted = mapToStringToJson(inputJson);
 						parsedArgs = MAPPER.readTree(converted);
-					} catch (Exception ignored) { /* truly malformed */ }
+					} catch (Exception | LinkageError ignored) { /* truly malformed */ }
 				}
 			}
 		}
@@ -701,10 +702,18 @@ public class ToolCallMessage extends AbstractChatMessage {
 	String buildResultSummary() {
 		if (outputJson == null || outputJson.isBlank()) return null;
 		String text = outputJson.strip();
-		String custom = buildToolSpecificResultSummary(text);
-		if (custom != null) return custom;
-		String envelopeSummary = buildEnvelopeMessageSummary(text);
-		if (envelopeSummary != null) return envelopeSummary;
+		try {
+			String custom = buildToolSpecificResultSummary(text);
+			if (custom != null) return custom;
+			String envelopeSummary = buildEnvelopeMessageSummary(text);
+			if (envelopeSummary != null) return envelopeSummary;
+		}
+		catch (LinkageError e) {
+			// Ghidra puts every extension's lib/*.jar on one flat classpath, so another extension can
+			// pin an older jackson-core than the jackson-databind we bind against. Never let that take
+			// down the Swing event thread; degrade to the plain-text summary below instead.
+			Msg.warn(this, "Structured tool result summary unavailable (Jackson classpath conflict): " + e);
+		}
 
 		String[] lines = text.split("\\R");
 		int lineCount = lines.length;
@@ -810,12 +819,50 @@ public class ToolCallMessage extends AbstractChatMessage {
 			return null;
 		}
 		try {
-			ListItemsResult result = JSON_MAPPER.treeToValue(dataNode, ListItemsResult.class);
-			return result.summary();
+			ListItemsResult result = toListItemsResult(dataNode);
+			return result != null ? result.summary() : null;
 		}
-		catch (Exception ignored) {
+		catch (Exception | LinkageError ignored) {
 			return null;
 		}
+	}
+
+	/**
+	 * Map the structured {@code data} node to a {@link ListItemsResult} by walking the tree directly.
+	 * <p>
+	 * Deliberately avoids {@code ObjectMapper.treeToValue}: that path constructs a
+	 * {@code TreeTraversingParser}, whose constructor chain crosses from jackson-databind into
+	 * jackson-core. With Ghidra's shared extension classpath the loaded jackson-core may be older
+	 * than the jackson-databind we compiled against, which surfaces as a {@link NoSuchMethodError}.
+	 * Plain {@link JsonNode} access stays entirely within databind and has no such seam.
+	 */
+	private static ListItemsResult toListItemsResult(JsonNode node) {
+		JsonNode kindNode = node.get("kind");
+		if (kindNode == null || !kindNode.isTextual()) {
+			return null;
+		}
+		List<ListItemsResult.Item> items = new ArrayList<>();
+		JsonNode itemsNode = node.get("items");
+		if (itemsNode != null && itemsNode.isArray()) {
+			for (JsonNode itemNode : itemsNode) {
+				if (!itemNode.isObject()) {
+					continue;
+				}
+				items.add(new ListItemsResult.Item(
+					textOrNull(itemNode.get("display")),
+					textOrNull(itemNode.get("name")),
+					textOrNull(itemNode.get("address"))));
+			}
+		}
+		return new ListItemsResult(
+			kindNode.asText(),
+			node.path("count").asInt(items.size()),
+			node.path("truncated").asBoolean(false),
+			items);
+	}
+
+	private static String textOrNull(JsonNode node) {
+		return node == null || node.isNull() ? null : node.asText();
 	}
 
 	private String buildEnvelopeMessageSummary(String text) {
@@ -851,7 +898,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 			}
 			return root;
 		}
-		catch (Exception ignored) {
+		catch (Exception | LinkageError ignored) {
 			return null;
 		}
 	}
@@ -959,7 +1006,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 			JsonNode node = JSON_MAPPER.readTree(value);
 			return JSON_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(node);
 		}
-		catch (Exception ignored) {
+		catch (Exception | LinkageError ignored) {
 			return value;
 		}
 	}

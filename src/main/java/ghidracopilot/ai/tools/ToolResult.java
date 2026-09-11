@@ -65,7 +65,7 @@ public record ToolResult(
 		try {
 			return MAPPER.readValue(json, ToolResult.class);
 		}
-		catch (Exception ignored) {
+		catch (Exception | LinkageError ignored) {
 			return null;
 		}
 	}

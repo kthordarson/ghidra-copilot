@@ -104,6 +104,35 @@ tasks.withType(JavaCompile).configureEach {
 
 def extensionJarName = "${project.name}.jar"
 
+// buildExtension.gradle's copyDependencies task refills lib/ from the runtime classpath but never
+// removes anything, so a dependency upgrade leaves the old jar behind and the packaged extension
+// ships two versions of the same library (e.g. jackson-core 2.19.0 next to 2.21.1). Ghidra loads
+// every lib/*.jar on one flat classpath, which then fails at runtime with NoSuchMethodError.
+tasks.register('purgeStaleLibJars') {
+	group = "Ghidra"
+	description = "Delete jars in lib/ that are not part of the resolved runtime classpath."
+	doLast {
+		def libDir = file("lib")
+		if (!libDir.isDirectory()) {
+			return
+		}
+		// resolvedArtifacts covers module dependencies only, never the lib/*.jar fileTree itself.
+		Set<String> expected = configurations.runtimeClasspath.resolvedConfiguration.resolvedArtifacts
+			.collect { it.file.name } as Set
+		expected.add(extensionJarName.toString())
+		libDir.listFiles()
+			.findAll { it.isFile() && it.name.endsWith('.jar') && !expected.contains(it.name) }
+			.each { stale ->
+				logger.lifecycle("Removing stale lib jar: ${stale.name}")
+				stale.delete()
+			}
+	}
+}
+
+tasks.named('copyDependencies') { copyTask ->
+	copyTask.dependsOn tasks.named('purgeStaleLibJars')
+}
+
 tasks.register('syncJarToLib', Copy) {
 	dependsOn tasks.named('jar')
 	from(tasks.named('jar').flatMap { it.archiveFile })
