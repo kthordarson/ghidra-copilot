@@ -1,6 +1,7 @@
 package ghidracopilot.ai;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 
 import com.azure.ai.openai.OpenAIClientBuilder;
@@ -8,6 +9,8 @@ import com.azure.core.credential.AzureKeyCredential;
 
 import ghidra.util.Msg;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.springframework.ai.anthropic.AnthropicChatModel;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.anthropic.api.AnthropicApi;
@@ -70,6 +73,27 @@ public final class SpringAiChatServiceFactory {
 		// probe always fails with a noisy UnsatisfiedLinkError before falling back to the JDK SSL engine
 		// (which already handles TLS 1.3 + ALPN fine). Disabling it up front avoids that failed attempt.
 		System.setProperty("io.netty.handler.ssl.noOpenSsl", "true");
+		quietNettyDebugLogging();
+	}
+
+	/**
+	 * Netty and Reactor Netty log their platform probes (Unsafe availability, direct-buffer cleaner,
+	 * tmpdir, bit mode, ...) at DEBUG, including a full stack trace for the expected
+	 * "sun.misc.Unsafe unavailable" outcome that our {@code io.netty.noUnsafe=true} setting causes.
+	 * Ghidra ships only slf4j-nop, so Netty's logger detection falls through to Log4j2 and inherits
+	 * Ghidra's root level of ALL, which dumps all of that into application.log on every client
+	 * build. Raise those two logger hierarchies to INFO so only genuine problems get through.
+	 */
+	private static void quietNettyDebugLogging() {
+		try {
+			Configurator.setLevel(Map.of(
+				"io.netty", Level.INFO,
+				"reactor.netty", Level.INFO));
+		}
+		catch (Throwable t) {
+			// A logging tweak must never get in the way of creating the chat service.
+			Msg.debug(SpringAiChatServiceFactory.class, "Could not adjust Netty log levels: " + t);
+		}
 	}
 
 	private SpringAiChatServiceFactory() {
