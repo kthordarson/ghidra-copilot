@@ -299,7 +299,7 @@ public class ToolCallMessage extends AbstractChatMessage {
 
 	public void setErrorMessage(String errorMessage) {
 		this.errorMessage = errorMessage != null ? errorMessage : "";
-		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setErrorMessage called, " + "length=" + this.errorMessage.length());
+		ghidra.util.Msg.debug(this, "[ToolCallMessage:" + toolName + "] setErrorMessage called, " + "length=" + this.errorMessage.length() + ", preview=" + truncate(this.errorMessage, 120));
 		updateDisplay();
 		updateExpandability();
 	}

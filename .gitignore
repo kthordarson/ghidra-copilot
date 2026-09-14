@@ -96,3 +96,6 @@ vendor/
 /.gradle*
 
 samples/
+ghidrassist_analysis.db
+ghidrassist_rlhf.db
+.claude/settings.json

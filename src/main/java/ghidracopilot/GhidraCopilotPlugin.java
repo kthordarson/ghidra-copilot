@@ -22,6 +22,7 @@ import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.swing.SwingUtilities;
+import javax.swing.SwingWorker;
 
 import docking.ActionContext;
 import docking.action.DockingAction;
@@ -109,7 +110,7 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 
 	/**
 	 * Plugin constructor.
-	 * 
+	 *
 	 * @param tool The plugin tool that this plugin is added to.
 	 */
 	public GhidraCopilotPlugin(PluginTool tool) {
@@ -342,23 +343,40 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		ProgramSelection selection = context.getSelection();
 		ProgramLocation location = context.getLocation();
 		Address pivot = location != null ? location.getAddress() : null;
-
 		AtomicBoolean truncated = new AtomicBoolean(false);
-		String snippet = selectionOnly
-				? buildListingSelectionSnippet(program, selection, pivot, truncated)
-				: buildListingLineSnippet(program, pivot, truncated);
-		if (!StringUtils.hasText(snippet)) {
-			provider.addSystemMessage("Copilot could not capture listing text to explain.");
-			return;
-		}
 
-		Function function = findFunction(program, pivot);
-		String prompt = buildExplainPrompt(selectionOnly ? "assembly selection" : "assembly lines", snippet, function,
-			false, truncated.get());
-		String preface = selectionOnly
-				? "Explaining the selected listing range with Copilot."
-				: "Explaining the current listing lines with Copilot.";
-		showProviderAndSend(prompt, preface);
+		new SwingWorker<String, Void>() {
+			@Override
+			protected String doInBackground() {
+				return selectionOnly
+						? buildListingSelectionSnippet(program, selection, pivot, truncated)
+						: buildListingLineSnippet(program, pivot, truncated);
+			}
+
+			@Override
+			protected void done() {
+				String snippet;
+				try {
+					snippet = get();
+				}
+				catch (Exception ex) {
+					Msg.error(getClass(), "Failed to build listing snippet to explain", ex);
+					return;
+				}
+				if (!StringUtils.hasText(snippet)) {
+					provider.addSystemMessage("Copilot could not capture listing text to explain.");
+					return;
+				}
+
+				Function function = findFunction(program, pivot);
+				String prompt = buildExplainPrompt(selectionOnly ? "assembly selection" : "assembly lines", snippet,
+					function, false, truncated.get());
+				String preface = selectionOnly
+						? "Explaining the selected listing range with Copilot."
+						: "Explaining the current listing lines with Copilot.";
+				showProviderAndSend(prompt, preface);
+			}
+		}.execute();
 	}
 
 	private void handleDecompilerExplain(DecompilerActionContext context, boolean selectionOnly) {
@@ -370,43 +388,64 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 		Address pivot = location != null ? location.getAddress() : null;
 		AtomicBoolean truncated = new AtomicBoolean(false);
 
-		String selectionPreview = extractDecompilerSelection(context);
-		Integer caretLine = context != null ? context.getLineNumber() : null;
-		if (caretLine == null && location instanceof DecompilerLocation decompLoc) {
-			caretLine = resolveDecompilerLine(decompLoc);
-		}
+		new SwingWorker<Void, Void>() {
+			private String selectionPreview;
+			private Integer caretLine;
+			private boolean usedSelection = selectionOnly;
+			private String snippet;
 
-		boolean usedSelection = selectionOnly;
-		String snippet;
-		if (selectionOnly) {
-			snippet = buildDecompilerSelectionSnippet(context, truncated);
-		}
-		else {
-			AtomicBoolean selectionTruncated = new AtomicBoolean(false);
-			String selectedText = buildDecompilerSelectionSnippet(context, selectionTruncated);
-			if (StringUtils.hasText(selectedText)) {
-				snippet = selectedText;
-				usedSelection = true;
-				truncated.set(selectionTruncated.get());
-			}
-			else {
-				snippet = buildDecompilerLinesSnippet(context, truncated);
-			}
-		}
-		if (!StringUtils.hasText(snippet)) {
-			provider.addSystemMessage("Copilot could not capture decompiler text to explain.");
-			logDecompilerCapture(selectionOnly, usedSelection, selectionPreview, caretLine, pivot, null, null);
-			return;
-		}
+			@Override
+			protected Void doInBackground() {
+				selectionPreview = extractDecompilerSelection(context);
+				caretLine = context != null ? context.getLineNumber() : null;
+				if (caretLine == null && location instanceof DecompilerLocation decompLoc) {
+					caretLine = resolveDecompilerLine(decompLoc);
+				}
 
-		Function function = findFunction(program, pivot);
-		String prompt = buildExplainPrompt(
-			usedSelection ? "decompiler selection" : "decompiler lines", snippet, function, true, truncated.get());
-		String preface = usedSelection
-			? "Explaining the selected decompiler text with Copilot."
-			: "Explaining the current decompiler lines with Copilot.";
-		logDecompilerCapture(selectionOnly, usedSelection, selectionPreview, caretLine, pivot, snippet, function);
-		showProviderAndSend(prompt, preface);
+				if (selectionOnly) {
+					snippet = buildDecompilerSelectionSnippet(context, truncated);
+				}
+				else {
+					AtomicBoolean selectionTruncated = new AtomicBoolean(false);
+					String selectedText = buildDecompilerSelectionSnippet(context, selectionTruncated);
+					if (StringUtils.hasText(selectedText)) {
+						snippet = selectedText;
+						usedSelection = true;
+						truncated.set(selectionTruncated.get());
+					}
+					else {
+						snippet = buildDecompilerLinesSnippet(context, truncated);
+					}
+				}
+				return null;
+			}
+
+			@Override
+			protected void done() {
+				try {
+					get();
+				}
+				catch (Exception ex) {
+					Msg.error(getClass(), "Failed to build decompiler snippet to explain", ex);
+					return;
+				}
+				if (!StringUtils.hasText(snippet)) {
+					provider.addSystemMessage("Copilot could not capture decompiler text to explain.");
+					logDecompilerCapture(selectionOnly, usedSelection, selectionPreview, caretLine, pivot, null, null);
+					return;
+				}
+
+				Function function = findFunction(program, pivot);
+				String prompt = buildExplainPrompt(usedSelection ? "decompiler selection" : "decompiler lines",
+					snippet, function, true, truncated.get());
+				String preface = usedSelection
+					? "Explaining the selected decompiler text with Copilot."
+					: "Explaining the current decompiler lines with Copilot.";
+				logDecompilerCapture(selectionOnly, usedSelection, selectionPreview, caretLine, pivot, snippet,
+					function);
+				showProviderAndSend(prompt, preface);
+			}
+		}.execute();
 	}
 
 	private void logDecompilerCapture(boolean selectionRequested, boolean usedSelection, String rawSelection,
@@ -774,8 +813,7 @@ public class GhidraCopilotPlugin extends ProgramPlugin implements OptionsChangeL
 						+ clipboardSelectionRef.get().length());
 			}
 			else {
-				Msg.warn(getClass(),
-					"Decompiler selection source=" + usedSourceRef.get() + " len=" + ref.get().length());
+				Msg.debug(getClass(), "Decompiler selection source=" + usedSourceRef.get() + " len=" + ref.get().length());
 			}
 			if (hadError.get()) {
 				Msg.warn(getClass(), "Decompiler selection fetch encountered errors; selection may be empty");
