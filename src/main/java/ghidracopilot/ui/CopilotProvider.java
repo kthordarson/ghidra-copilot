@@ -272,12 +272,9 @@ public class CopilotProvider extends ComponentProvider {
 		chatInput.setSendingEnabled(false);
 
 		List<ChatMessage> historySnapshot = List.copyOf(messageHistory);
-		String contextualSystemPrompt = ContextSnapshotBuilder.build(programPlugin, null);
 		Map<String, ToolCallMessage> activeToolMessages = new ConcurrentHashMap<>();
 		ToolCallObserver toolCallObserver = update -> SwingUtilities.invokeLater(
 			() -> handleToolCallUpdate(update, activeToolMessages));
-		ChatRequest chatRequest =
-			new ChatRequest(prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver);
 		ChatMessage userEntry = ChatMessage.user(prompt);
 		messageHistory.add(userEntry);
 
@@ -384,6 +381,9 @@ public class CopilotProvider extends ComponentProvider {
 		activeRequest = new SwingWorker<String, Void>() {
 			@Override
 			protected String doInBackground() throws Exception {
+				String contextualSystemPrompt = ContextSnapshotBuilder.build(programPlugin, null);
+				ChatRequest chatRequest = new ChatRequest(
+					prompt, modelIdentifier, contextualSystemPrompt, historySnapshot, toolCallObserver);
 				chatService.streamChat(chatRequest, streamListener);
 				return null;
 			}
