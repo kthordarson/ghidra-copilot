@@ -1,27 +1,39 @@
 package ghidracopilot.ai.tools;
 
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
+import ghidra.app.decompiler.DecompInterface;
+import ghidra.app.decompiler.DecompileResults;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
-import ghidra.program.model.listing.Parameter;
 import ghidra.program.model.listing.Program;
-import ghidra.program.model.listing.Variable;
-import ghidra.program.model.listing.VariableStorage;
+import ghidra.program.model.pcode.HighFunction;
+import ghidra.program.model.pcode.HighFunctionDBUtil;
+import ghidra.program.model.pcode.HighSymbol;
+import ghidra.program.model.pcode.LocalSymbolMap;
 import ghidra.program.model.symbol.SymbolUtilities;
+import ghidra.util.exception.DuplicateNameException;
 import ghidra.util.exception.InvalidInputException;
+import ghidra.util.task.TaskMonitorAdapter;
 
 /**
  * Tool to rename parameters or local stack variables within a function.
+ *
+ * <p>Variable names are resolved against the decompiler's {@link HighFunction} model (the same
+ * "param_1"/"local_10" style names shown by {@code decompile_function}), since those decompiler-
+ * generated names frequently do not exist as committed {@link ghidra.program.model.listing.Variable}
+ * entries on the underlying {@link Function} until the decompiler's analysis is committed.</p>
  */
 final class RenameVariableTool implements MutationTool {
+
+	private static final int DECOMPILE_TIMEOUT_SECONDS = 30;
 
 	private final CopilotToolContext context;
 
@@ -63,51 +75,76 @@ final class RenameVariableTool implements MutationTool {
 		}
 
 		String cleanedNewName = SymbolUtilities.replaceInvalidChars(newName.trim(), true);
-		Variable target = resolveVariable(function, currentName, normalizeScope(scope));
-		if (target == null) {
-			return ToolResult.error("Variable '" + currentName + "' not found.", summarizeVariables(function));
-		}
+		Scope requestedScope = normalizeScope(scope);
 
-		String originalName = target.getName();
-		boolean commit = false;
-		int tx = program.startTransaction("Copilot Rename Variable");
+		DecompInterface decompiler = new DecompInterface();
 		try {
-			target.setName(cleanedNewName, context.userSourceType());
-			commit = true;
-			return ToolResult.success(
-				"Renamed " + describeScope(target) + " '" + originalName + "' to " + cleanedNewName + " in function "
-					+ function.getName());
-		}
-		catch (InvalidInputException ex) {
-			return ToolResult.error("Invalid variable name: " + ex.getMessage());
-		}
-		catch (Exception ex) {
-			return ToolResult.error("Rename failed: " + ex.getMessage());
+			if (!decompiler.openProgram(program)) {
+				return ToolResult.error("Decompiler refused program: " + decompiler.getLastMessage());
+			}
+			DecompileResults results = decompiler.decompileFunction(function, DECOMPILE_TIMEOUT_SECONDS,
+				TaskMonitorAdapter.DUMMY);
+			if (!results.decompileCompleted()) {
+				return ToolResult.error("Decompilation failed: " + results.getErrorMessage());
+			}
+			HighFunction highFunction = results.getHighFunction();
+			if (highFunction == null) {
+				return ToolResult.error("Decompiler produced no high-level function for " + function.getName());
+			}
+
+			HighSymbol target = resolveHighSymbol(highFunction, currentName, requestedScope);
+			if (target == null) {
+				return ToolResult.error("Variable '" + currentName + "' not found.",
+					summarizeVariables(highFunction));
+			}
+
+			String originalName = target.getName();
+			boolean commit = false;
+			int tx = program.startTransaction("Copilot Rename Variable");
+			try {
+				HighFunctionDBUtil.updateDBVariable(target, cleanedNewName, null, context.userSourceType());
+				commit = true;
+				return ToolResult.success(
+					"Renamed " + (target.isParameter() ? "parameter" : "local") + " '" + originalName + "' to "
+						+ cleanedNewName + " in function " + function.getName());
+			}
+			catch (InvalidInputException | DuplicateNameException ex) {
+				return ToolResult.error("Invalid variable name: " + ex.getMessage());
+			}
+			catch (Exception ex) {
+				return ToolResult.error("Rename failed: " + ex.getMessage());
+			}
+			finally {
+				program.endTransaction(tx, commit);
+			}
 		}
 		finally {
-			program.endTransaction(tx, commit);
+			decompiler.dispose();
 		}
 	}
 
-	private Variable resolveVariable(Function function, String name, Scope scope) {
+	private HighSymbol resolveHighSymbol(HighFunction highFunction, String name, Scope scope) {
 		String targetName = name.trim();
-		if (scope == Scope.ALL || scope == Scope.PARAMETER) {
-			Parameter[] parameters = function.getParameters();
-			for (Parameter parameter : parameters) {
-				if (parameter.getName().equals(targetName) || parameter.getName().equalsIgnoreCase(targetName)) {
-					return parameter;
-				}
+		LocalSymbolMap symbolMap = highFunction.getLocalSymbolMap();
+		Iterator<HighSymbol> symbols = symbolMap.getSymbols();
+		HighSymbol caseInsensitiveMatch = null;
+		while (symbols.hasNext()) {
+			HighSymbol symbol = symbols.next();
+			if (scope == Scope.PARAMETER && !symbol.isParameter()) {
+				continue;
+			}
+			if (scope == Scope.LOCAL && symbol.isParameter()) {
+				continue;
+			}
+			String symbolName = symbol.getName();
+			if (symbolName.equals(targetName)) {
+				return symbol;
+			}
+			if (caseInsensitiveMatch == null && symbolName.equalsIgnoreCase(targetName)) {
+				caseInsensitiveMatch = symbol;
 			}
 		}
-		if (scope == Scope.ALL || scope == Scope.LOCAL) {
-			Variable[] locals = function.getLocalVariables();
-			for (Variable local : locals) {
-				if (local.getName().equals(targetName) || local.getName().equalsIgnoreCase(targetName)) {
-					return local;
-				}
-			}
-		}
-		return null;
+		return caseInsensitiveMatch;
 	}
 
 	private Scope normalizeScope(String scope) {
@@ -122,36 +159,17 @@ final class RenameVariableTool implements MutationTool {
 		};
 	}
 
-	private String summarizeVariables(Function function) {
+	private String summarizeVariables(HighFunction highFunction) {
 		List<String> names = new ArrayList<>();
-		Parameter[] parameters = function.getParameters();
-		if (parameters != null && parameters.length > 0) {
-			Arrays.stream(parameters).forEach(parameter -> names.add("param: " + parameter.getName()));
-		}
-		Variable[] locals = function.getLocalVariables();
-		if (locals != null && locals.length > 0) {
-			Arrays.stream(locals).forEach(local -> {
-				StringBuilder builder = new StringBuilder("local: ").append(local.getName());
-				try {
-					VariableStorage storage = local.getVariableStorage();
-					if (storage != null) {
-						builder.append(" @ ").append(storage);
-					}
-				}
-				catch (Exception ignored) {
-					// storage resolution may fail; ignore.
-				}
-				names.add(builder.toString());
-			});
+		Iterator<HighSymbol> symbols = highFunction.getLocalSymbolMap().getSymbols();
+		while (symbols.hasNext()) {
+			HighSymbol symbol = symbols.next();
+			names.add((symbol.isParameter() ? "param: " : "local: ") + symbol.getName());
 		}
 		if (names.isEmpty()) {
 			return "No parameters or locals found.";
 		}
 		return String.join("; ", names);
-	}
-
-	private String describeScope(Variable variable) {
-		return variable instanceof Parameter ? "parameter" : "local";
 	}
 
 	private enum Scope {

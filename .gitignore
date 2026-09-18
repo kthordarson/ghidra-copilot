@@ -99,3 +99,4 @@ samples/
 ghidrassist_analysis.db
 ghidrassist_rlhf.db
 .claude/settings.json
+ghidrassist_chat_artifacts/*
