@@ -1,5 +1,8 @@
 package ghidracopilot.ai.tools;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
@@ -9,6 +12,8 @@ import ghidra.app.util.cparser.C.ParseException;
 import ghidra.app.util.parser.FunctionSignatureParser;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.data.DataTypeConflictHandler;
+import ghidra.program.model.data.FunctionDefinitionDataType;
+import ghidra.util.exception.InvalidInputException;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.FunctionSignature;
@@ -68,11 +73,33 @@ final class RetypeFunctionTool implements MutationTool {
 		FunctionSignatureParser parser =
 			new FunctionSignatureParser(program.getDataTypeManager(), context.dataTypeQueryService());
 		FunctionSignature parsedSignature;
+		String conventionNote = "";
 		try {
 			// Ghidra has no const/volatile qualifiers or 'struct' tags in its type model; strip them
-			parsedSignature = parser.parse(function.getSignature(), CTypeText.normalize(signatureText));
+			String normalized = CTypeText.normalize(signatureText);
+			// The parser only recognizes conventions the compiler spec defines and otherwise folds
+			// e.g. "__fastcall" into the return type. Pull it out and apply it ourselves.
+			String requestedConvention = null;
+			Matcher m = CONVENTION_PATTERN.matcher(normalized);
+			int paren = normalized.indexOf('(');
+			if (m.find() && (paren < 0 || m.start() < paren)) {
+				requestedConvention = canonicalConvention(m.group(1));
+				normalized = (normalized.substring(0, m.start()) + " " + normalized.substring(m.end()))
+					.replaceAll("\\s+", " ").trim();
+			}
+			parsedSignature = parser.parse(function.getSignature(), normalized);
+			if (requestedConvention != null && parsedSignature instanceof FunctionDefinitionDataType def) {
+				String supported = findSupportedConvention(program, requestedConvention);
+				if (supported != null) {
+					def.setCallingConvention(supported);
+				}
+				else {
+					conventionNote = " (calling convention '" + requestedConvention
+						+ "' is not defined for this program's compiler spec; ignored)";
+				}
+			}
 		}
-		catch (ParseException | CancelledException ex) {
+		catch (ParseException | CancelledException | InvalidInputException ex) {
 			return ToolResult.error("Unable to parse signature: " + ex.getMessage());
 		}
 
@@ -98,6 +125,29 @@ final class RetypeFunctionTool implements MutationTool {
 		}
 
 		return ToolResult.success(
-			"Retyped function at " + context.formatAddress(address) + " with signature '" + signatureText.trim() + "'.");
+			"Retyped function at " + context.formatAddress(address) + " with signature '" + signatureText.trim() + "'."
+				+ conventionNote);
+	}
+
+	private static final Pattern CONVENTION_PATTERN = Pattern.compile(
+		"\\b(__cdecl|_cdecl|__stdcall|_stdcall|__fastcall|_fastcall|__thiscall|__vectorcall|__pascal|__regcall"
+			+ "|__clrcall|WINAPI|CALLBACK|APIENTRY|PASCAL|__syscall)\\b");
+
+	private static String canonicalConvention(String token) {
+		return switch (token) {
+			case "WINAPI", "CALLBACK", "APIENTRY", "PASCAL", "_stdcall" -> "__stdcall";
+			case "_cdecl" -> "__cdecl";
+			case "_fastcall" -> "__fastcall";
+			default -> token;
+		};
+	}
+
+	private static String findSupportedConvention(Program program, String requested) {
+		for (String name : program.getFunctionManager().getCallingConventionNames()) {
+			if (name.equalsIgnoreCase(requested)) {
+				return name;
+			}
+		}
+		return null;
 	}
 }
