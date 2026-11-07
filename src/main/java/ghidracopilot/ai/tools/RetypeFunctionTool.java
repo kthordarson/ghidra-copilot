@@ -69,7 +69,8 @@ final class RetypeFunctionTool implements MutationTool {
 			new FunctionSignatureParser(program.getDataTypeManager(), context.dataTypeQueryService());
 		FunctionSignature parsedSignature;
 		try {
-			parsedSignature = parser.parse(function.getSignature(), signatureText.trim());
+			// Ghidra has no const/volatile qualifiers or 'struct' tags in its type model; strip them
+			parsedSignature = parser.parse(function.getSignature(), CTypeText.normalize(signatureText));
 		}
 		catch (ParseException | CancelledException ex) {
 			return ToolResult.error("Unable to parse signature: " + ex.getMessage());

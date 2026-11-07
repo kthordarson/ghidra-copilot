@@ -21,6 +21,7 @@ import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.Variable;
+import ghidra.program.model.listing.VariableSizeException;
 import ghidra.program.model.listing.VariableStorage;
 import ghidra.program.model.symbol.SourceType;
 import ghidra.util.data.DataTypeParser;
@@ -116,9 +117,13 @@ final class StructureTool implements MutationTool {
 		@ToolParam(description = "Struct name to apply.", required = true)
 		String structName,
 		@ToolParam(description = "Optional category path where the struct lives.") String categoryPath,
-		@ToolParam(description = "Restrict search to 'parameter' or 'local'. Defaults to both.") String scope) {
+		@ToolParam(description = "Restrict search to 'parameter' or 'local'. Defaults to both.") String scope,
+		@ToolParam(description = "If true, remove other local variables whose stack storage overlaps the struct "
+			+ "(needed when the struct is larger than the current variable). Default false.")
+		Boolean removeOverlapping) {
 		return context.withCurrentProgram(program -> doApplyStructToVariable(
-			program, addressText, variableName, structName, categoryPath, scope));
+			program, addressText, variableName, structName, categoryPath, scope,
+			removeOverlapping != null && removeOverlapping));
 	}
 
 	private ToolResult doDefineStruct(Program program, String structName, String fieldsText, String categoryPathText) {
@@ -219,7 +224,7 @@ final class StructureTool implements MutationTool {
 	}
 
 	private ToolResult doApplyStructToVariable(Program program, String addressText, String variableName,
-			String structName, String categoryPathText, String scope) {
+			String structName, String categoryPathText, String scope, boolean removeOverlapping) {
 		if (variableName == null || variableName.isBlank()) {
 			return ToolResult.error("Variable name must not be blank.");
 		}
@@ -248,11 +253,18 @@ final class StructureTool implements MutationTool {
 		boolean commit = false;
 		int tx = program.startTransaction("Copilot Apply Struct To Variable");
 		try {
-			target.setDataType(struct, SourceType.USER_DEFINED);
+			// alignStack=false keeps the variable at its current stack offset
+			target.setDataType(struct, false, removeOverlapping, SourceType.USER_DEFINED);
 			commit = true;
 			return ToolResult.success(
 				"Set " + describeScope(target) + " '" + target.getName() + "' to struct '" + struct.getName()
-					+ "' in function " + function.getName());
+					+ "' in function " + function.getName()
+					+ (removeOverlapping ? " (overlapping locals removed)" : ""));
+		}
+		catch (VariableSizeException ex) {
+			return ToolResult.error("Failed to set variable type: " + ex.getMessage()
+				+ ". The struct (" + struct.getLength() + " bytes) overlaps other locals; verify the struct "
+				+ "size/start offset, then retry with removeOverlapping=true to absorb them into the struct.");
 		}
 		catch (Exception ex) {
 			return ToolResult.error("Failed to set variable type: " + ex.getMessage());
@@ -431,21 +443,18 @@ final class StructureTool implements MutationTool {
 		String[] parts = fieldsText.replace(';', '\n').split("\n");
 
 		for (String raw : parts) {
-			String entry = raw.trim();
+			String entry = CTypeText.normalize(raw);
 			if (entry.isEmpty()) {
 				continue;
 			}
-			int split = Math.max(entry.lastIndexOf(' '), entry.lastIndexOf('\t'));
-			if (split <= 0 || split >= entry.length() - 1) {
+			CTypeText.Declaration decl = CTypeText.splitDeclaration(entry);
+			if (decl == null) {
 				return BuildResult.error("Unable to parse field: '" + entry + "'. Use 'type name'.");
 			}
-			String typeText = entry.substring(0, split).trim();
-			String fieldName = entry.substring(split + 1).trim();
-			if (fieldName.isBlank()) {
-				return BuildResult.error("Missing field name for entry: '" + entry + "'.");
-			}
+			String typeText = decl.typeText();
+			String fieldName = decl.name();
 			try {
-				DataType fieldType = parser.parse(typeText);
+				DataType fieldType = resolveFieldType(dtm, parser, typeText, category);
 				structure.add(fieldType, fieldName, null);
 			}
 			catch (CancelledException ex) {
@@ -459,6 +468,49 @@ final class StructureTool implements MutationTool {
 			}
 		}
 		return BuildResult.success(structure);
+	}
+
+	/**
+	 * Resolve a field type. Prefers a type living in the struct's own category (so sibling types
+	 * defined alongside it win), then the normal parser lookup, and finally a unique
+	 * case-insensitive name match across the program's data types. The plain parser lookup fails
+	 * with "Unrecognized data type" when a name exists in several categories.
+	 */
+	private DataType resolveFieldType(DataTypeManager dtm, DataTypeParser parser, String typeText,
+			CategoryPath category) throws InvalidDataTypeException, CancelledException {
+		String baseName = CTypeText.baseName(typeText);
+		if (category != null && !CategoryPath.ROOT.equals(category) && baseName != null
+			&& dtm.getDataType(category, baseName) != null) {
+			return parser.parse(typeText, category);
+		}
+		try {
+			return parser.parse(typeText);
+		}
+		catch (InvalidDataTypeException ex) {
+			if (baseName == null) {
+				throw ex;
+			}
+			DataType unique = null;
+			for (var it = dtm.getAllDataTypes(); it.hasNext();) {
+				DataType candidate = it.next();
+				if (candidate == null || !baseName.equalsIgnoreCase(candidate.getName())) {
+					continue;
+				}
+				if (unique != null && !unique.isEquivalent(candidate)) {
+					throw new InvalidDataTypeException(ex.getMessage() + " (ambiguous: found in "
+						+ unique.getCategoryPath() + " and " + candidate.getCategoryPath()
+						+ "; pass a categoryPath or remove the duplicate)");
+				}
+				if (unique == null) {
+					unique = candidate;
+				}
+			}
+			if (unique == null) {
+				throw ex;
+			}
+			return parser.parse(unique.getName() + typeText.substring(baseName.length()),
+				unique.getCategoryPath());
+		}
 	}
 
 	private Variable resolveVariable(Function function, String name, Scope scope) {
