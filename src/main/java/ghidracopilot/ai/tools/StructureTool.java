@@ -490,26 +490,54 @@ final class StructureTool implements MutationTool {
 			if (baseName == null) {
 				throw ex;
 			}
-			DataType unique = null;
+			// Only candidates that actually parse (e.g. fixed-length) are viable. This lets a
+			// typedef such as WNDPROC (/winuser.h) win over a same-named FunctionDefinition
+			// (/winuser.h/functions) that can't be used as a field type on its own.
+			String suffix = typeText.substring(baseName.length());
+			DataType chosen = null;
+			DataType chosenSource = null;
+			InvalidDataTypeException lastError = ex;
 			for (var it = dtm.getAllDataTypes(); it.hasNext();) {
 				DataType candidate = it.next();
 				if (candidate == null || !baseName.equalsIgnoreCase(candidate.getName())) {
 					continue;
 				}
-				if (unique != null && !unique.isEquivalent(candidate)) {
+				DataType parsed = parseCandidate(parser, candidate, suffix);
+				if (parsed == null) {
+					lastError = new InvalidDataTypeException(ex.getMessage() + " (candidate "
+						+ candidate.getPathName() + " is not usable as a field type)");
+					continue;
+				}
+				if (chosen == null) {
+					chosen = parsed;
+					chosenSource = candidate;
+				}
+				else if (!chosen.isEquivalent(parsed)) {
 					throw new InvalidDataTypeException(ex.getMessage() + " (ambiguous: found in "
-						+ unique.getCategoryPath() + " and " + candidate.getCategoryPath()
+						+ chosenSource.getCategoryPath() + " and " + candidate.getCategoryPath()
 						+ "; pass a categoryPath or remove the duplicate)");
 				}
-				if (unique == null) {
-					unique = candidate;
-				}
 			}
-			if (unique == null) {
-				throw ex;
+			if (chosen == null) {
+				throw lastError;
 			}
-			return parser.parse(unique.getName() + typeText.substring(baseName.length()),
-				unique.getCategoryPath());
+			return chosen;
+		}
+	}
+
+	private DataType parseCandidate(DataTypeParser parser, DataType candidate, String suffix)
+			throws CancelledException {
+		boolean plain = suffix == null || suffix.isBlank();
+		if (plain) {
+			// Use the candidate itself; parser.parse(name, category) may still pick another category.
+			return candidate.getLength() > 0 && !(candidate instanceof ghidra.program.model.data.FunctionDefinition)
+					? candidate : null;
+		}
+		try {
+			return parser.parse(candidate.getName() + suffix, candidate.getCategoryPath());
+		}
+		catch (InvalidDataTypeException e) {
+			return null;
 		}
 	}
 
